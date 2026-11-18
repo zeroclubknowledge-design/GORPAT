@@ -81,6 +81,7 @@
   modalEl.addEventListener('mousedown', (e) => { if (e.target === modalEl) closeModal(); });
   modalEl.addEventListener('click', (e) => { if (e.target.closest('[data-close]')) closeModal(); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !modalEl.hidden) closeModal(); });
+  window.addEventListener('hashchange', () => { if (!modalEl.hidden) closeModal(); });
 
   function field(f, v) {
     const val = v ?? f.default ?? '';
