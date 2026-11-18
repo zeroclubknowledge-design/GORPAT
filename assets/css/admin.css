@@ -437,3 +437,41 @@ body.auth-mode .main { min-height: 0; }
 body.auth-mode .auth { place-items: start center; position: fixed; inset: 0; min-height: 0; height: auto; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
 body.auth-mode .auth-bg { position: fixed; }
 body.auth-mode .auth-card { margin: auto; }
+
+/* ---------- DESKTOP: compact create buttons (phones keep the bottom bar) ---------- */
+.head-new { white-space: nowrap; }
+.head-new svg { width: 18px; height: 18px; }
+@media (min-width: 761px) {
+  .fab { display: none; }
+  .page { padding-bottom: 56px; }
+  /* in-card actions: tidy auto-width buttons instead of full-width bars */
+  .card .bar-btn { width: auto; min-height: 42px; padding: 0 20px; border-radius: 99px; font-size: 14.5px; margin-top: 6px; }
+  .card .bar-btn svg { width: 18px; height: 18px; }
+  .modal .bar-btn { width: auto; min-height: 44px; padding: 0 20px; border-radius: 99px; }
+}
+@media (max-width: 760px) { .head-new { display: none; } }
+@media (min-width: 761px) and (max-width: 1100px) { .head-new { padding: 0 16px; } }
+
+/* ---------- head admin: notices & access editor ---------- */
+.notice { display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 56px; padding: 12px 18px; margin-bottom: 16px; border-radius: 14px; background: #fff3ea; border: 1px solid #ffd2b3; color: var(--ink); font-size: 14.5px; transition: background .15s; }
+.notice:hover { background: #ffeadb; }
+.notice span { color: var(--orange-d); font-weight: 700; white-space: nowrap; }
+.pill-btn.sm { min-height: 36px; padding: 0 16px; font-size: 13.5px; }
+.acc-who { font-size: 14.5px; margin: -4px 0 14px; } .acc-who span { color: var(--muted); font-size: 13.5px; }
+.acc-presets { justify-content: flex-start; margin-bottom: 12px; }
+.acc-presets button { background: #f2f2f6; }
+.acc-presets button:hover { background: #e9e9f0; }
+.acc-grid { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.acc-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 8px 8px 16px; border-top: 1px solid var(--line); font-size: 14.5px; font-weight: 500; }
+.acc-row:first-child { border-top: 0; }
+.acc-lv { display: flex; gap: 4px; background: #f2f2f6; padding: 3px; border-radius: 10px; }
+.acc-lv button { min-height: 38px; min-width: 64px; padding: 0 12px; border-radius: 8px; font-size: 13.5px; font-weight: 600; color: var(--ink-2); }
+.acc-lv button.on { background: #fff; color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+.acc-lv button.on[data-l="edit"] { background: var(--orange); color: #fff; }
+.acc-lv button.on[data-l="view"] { color: #2f5bd3; }
+.acc-note { font-size: 12.5px; color: var(--muted); margin: 10px 2px 4px; line-height: 1.5; }
+@media (max-width: 520px) {
+  .acc-row { flex-direction: column; align-items: stretch; gap: 6px; padding: 10px 12px; }
+  .acc-lv button { flex: 1; min-width: 0; min-height: 42px; }
+}
+.side-nav .badge { position: static; margin-left: auto; flex: none; }

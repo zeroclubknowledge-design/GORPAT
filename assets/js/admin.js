@@ -117,12 +117,12 @@
   const NAV = [
     ['overview', 'Business overview'], ['clients', 'Clients'], ['procurement', 'Procurement'], ['invoices', 'Invoices'],
     ['quotations', 'Quotations'], ['expenses', 'Expenses'], ['payments', 'Payments'], ['vendors', 'Vendors'],
-    ['reports', 'Reports'], ['settings', 'Staff & settings'],
+    ['reports', 'Reports'], ['settings', 'Admins & settings'],
   ];
   function renderNav(active) {
     const newReq = db.all('quotations').filter((q) => q.status === 'Request').length;
     const newEnq = db.all('enquiries').filter((q) => q.status === 'New').length;
-    const badge = { quotations: newReq, clients: newEnq };
+    const badge = { quotations: newReq, clients: newEnq, settings: GT.pendingAdmins };
     const mb = $('#menuBtn'); if (mb) { const has = Object.keys(badge).some((k) => badge[k] && canSee(k)); mb.querySelector('.dot') ? (!has && mb.querySelector('.dot').remove()) : (has && mb.insertAdjacentHTML('beforeend', '<span class="dot"></span>')); }
     $('#sideNav').innerHTML = NAV.filter(([k]) => canSee(k)).map(([k, l]) => `<a href="#/${k}" class="${k === active ? 'active' : ''}" title="${l}">${ic(k)}<span>${l}</span>${badge[k] ? `<span class="badge">${badge[k]}</span>` : ''}</a>`).join('');
   }
@@ -131,11 +131,16 @@
     if (page === 'overview') return true;
     if (page === 'reports') return GT.can('reports');
     if (page === 'settings') return GT.can('settings');
+    if (page === 'clients') return GT.can('read', 'clients') || GT.can('read', 'enquiries');
     return GT.can('read', PAGE_COL[page]);
   }
-  function head(title) {
+  // create = { label, act }: a compact "New …" button in the header on desktop
+  // (phones get the full-width bottom bar from fab() instead)
+  function head(title, create) {
     const u = GT.user || {};
-    return `<div class="page-head"><h1>${esc(title)}</h1><div class="head-tools"><button class="round" data-act="search" aria-label="Search">${ic('search')}</button><button class="staff-pill" data-act="me" title="${esc(u.name)} — ${esc(u.role)}">${ic('star', 'i" style="width:15px;height:15px')}${esc(String(u.role || 'Staff').toUpperCase())}</button></div></div>`;
+    const newBtn = create && !(FAB_COL[create.act] && !GT.can('write', FAB_COL[create.act]))
+      ? `<button class="pill-btn solid head-new" data-act="${create.act}">${ic('plus')}${esc(create.label.charAt(0) + create.label.slice(1).toLowerCase())}</button>` : '';
+    return `<div class="page-head"><h1>${esc(title)}</h1><div class="head-tools">${newBtn}<button class="round" data-act="search" aria-label="Search">${ic('search')}</button><button class="staff-pill" data-act="me" title="${esc(u.name)} — ${esc(GT.roleLabel(u.role))}">${ic('star', 'i" style="width:15px;height:15px')}${esc(GT.roleLabel(u.role).toUpperCase())}</button></div></div>`;
   }
   const FAB_COL = { 'new-invoices': 'invoices', 'new-quotations': 'quotations', 'add-clients': 'clients', 'add-vendors': 'vendors', 'add-procurement': 'procurement', 'add-expenses': 'expenses', 'add-payments': 'payments' };
   function fab(label, act) { if (FAB_COL[act] && !GT.can('write', FAB_COL[act])) return ''; return `<div class="fab"><button data-act="${act}">${ic('plus')}${esc(label)}</button></div>`; }
@@ -185,6 +190,7 @@
     const reqs = db.all('quotations').filter((q) => q.status === 'Request');
     const enq = db.all('enquiries').filter((e) => e.status === 'New');
     main.innerHTML = `<div class="page">${head('Business overview')}
+      ${GT.pendingAdmins ? `<a class="notice" href="#/settings"><b>${GT.pendingAdmins} admin request${GT.pendingAdmins > 1 ? 's' : ''} waiting for your approval</b><span>Review →</span></a>` : ''}
       <div class="kpis">
         <div class="kpi accent"><small>Collected in ${MONTHS[now.getMonth()]}</small><b class="tnum">${moneyShort(collected)}</b><span>from ${db.all('payments').filter((p) => p.date.startsWith(ym)).length} payment(s)</span></div>
         <div class="kpi"><small>Outstanding receivables</small><b class="tnum">${moneyShort(outstanding)}</b><span style="color:${overdue.length ? 'var(--red)' : ''}">${overdue.length} overdue invoice(s)</span></div>
@@ -230,7 +236,7 @@
     const total = shown.reduce((s, r) => s + r.s.total, 0);
     const second = isInv ? shown.reduce((s, r) => s + (r.st === 'Draft' ? 0 : r.s.bal), 0) : shown.filter((r) => r.st === 'Accepted').reduce((s, r) => s + r.s.total, 0);
     const period = L.mode === 'month' ? `${MONTHS[m - 1]} ${y}` : L.mode === 'year' ? String(y) : 'All time';
-    main.innerHTML = `<div class="page">${head(isInv ? 'Invoices' : 'Quotations')}
+    main.innerHTML = `<div class="page">${head(isInv ? 'Invoices' : 'Quotations', { label: isInv ? 'CREATE INVOICE' : 'CREATE QUOTATION', act: 'new-' + kind })}
       <div style="text-align:center"><div class="month-pill">${L.mode !== 'all' ? `<button data-act="prev" aria-label="Previous">${ic('chevL', 'i" style="width:16px;height:16px')}</button>` : ''}<span>${ic('cal', 'i" style="width:18px;height:18px')}${period}</span>${L.mode !== 'all' ? `<button data-act="next" aria-label="Next">${ic('chevR', 'i" style="width:16px;height:16px')}</button>` : ''}</div></div>
       <div class="totals-hero"><div class="lbl">Total</div><div class="big tnum">${moneyShort(total)}</div>
         <div class="due">${isInv ? `Balance Due: <b class="tnum">${moneyShort(second)}</b>` : `Accepted: <b class="tnum" style="color:var(--green)">${moneyShort(second)}</b>`}</div></div>
@@ -424,7 +430,7 @@
   function tablePage({ key, title, col, columns, fields, addLabel, rows, extraTop = '', tabs = '' }) {
     const q = (TBL[key] || '').toLowerCase();
     const list = (rows || db.all(col)).filter((r) => !q || JSON.stringify(r).toLowerCase().includes(q) || columns.some((c) => String(c.get(r)).toLowerCase().includes(q)));
-    main.innerHTML = `<div class="page">${head(title)}${extraTop}
+    main.innerHTML = `<div class="page">${head(title, addLabel ? { label: addLabel, act: 'add-' + col } : null)}${extraTop}
       <div class="toolbar">${tabs}<label class="search">${ic('search')}<input placeholder="Search ${esc(title.toLowerCase())}" value="${esc(TBL[key] || '')}" data-tblq="${key}"></label></div>
       <div class="table-wrap"><table><thead><tr>${columns.map((c) => `<th class="${c.r ? 'r' : ''}">${c.label}</th>`).join('')}</tr></thead>
       <tbody>${list.map((r) => `<tr data-edit="${col}:${r.id}">${columns.map((c) => `<td class="${c.r ? 'r tnum' : ''}" data-label="${esc(c.label)}">${c.html ? c.get(r) : esc(c.get(r))}</td>`).join('')}</tr>`).join('') || `<tr><td colspan="${columns.length}" style="text-align:center;color:var(--muted);padding:40px">Nothing here yet.</td></tr>`}</tbody></table></div>
@@ -458,7 +464,9 @@
   let clientTab = 'clients';
   PAGES.clients = function () {
     const nNew = db.all('enquiries').filter((e) => e.status === 'New').length;
-    const tabs = `<div class="seg tabs"><button data-ctab="clients" class="${clientTab === 'clients' ? 'on' : ''}">Clients</button><button data-ctab="enquiries" class="${clientTab === 'enquiries' ? 'on' : ''}">Enquiries${nNew ? ` (${nNew})` : ''}</button></div>`;
+    if (!GT.can('read', 'clients')) clientTab = 'enquiries';
+    if (!GT.can('read', 'enquiries')) clientTab = 'clients';
+    const tabs = !(GT.can('read', 'clients') && GT.can('read', 'enquiries')) ? '' : `<div class="seg tabs"><button data-ctab="clients" class="${clientTab === 'clients' ? 'on' : ''}">Clients</button><button data-ctab="enquiries" class="${clientTab === 'enquiries' ? 'on' : ''}">Enquiries${nNew ? ` (${nNew})` : ''}</button></div>`;
     if (clientTab === 'enquiries') return tablePage({ key: 'enq', title: 'Clients', col: 'enquiries', tabs, columns: [
       { label: 'Date', get: (r) => fmtD(r.date) }, { label: 'Name', get: (r) => r.name }, { label: 'Subject', get: (r) => r.subject || r.message.slice(0, 50) }, { label: 'Email', get: (r) => r.email }, { label: 'Status', get: (r) => chip(r.status), html: true }] });
     tablePage({ key: 'cl', title: 'Clients', col: 'clients', tabs, addLabel: 'ADD CLIENT', columns: [
@@ -547,7 +555,7 @@
   /* ================= SETTINGS ================= */
   PAGES.settings = function () {
     const s = db.settings();
-    main.innerHTML = `<div class="page">${head('Staff & settings')}
+    main.innerHTML = `<div class="page">${head('Admins & settings')}
       <div class="grid2">
         <form class="panel" id="setForm"><h3>Business &amp; invoicing</h3>
           <div class="fld-row">${field({ name: 'currency', label: 'Currency', type: 'select', options: [['NGN', 'NGN — Naira (₦)'], ['USD', 'USD — US dollar ($)'], ['GBP', 'GBP — Pound (£)'], ['EUR', 'EUR — Euro (€)']] }, s.currency)}${field({ name: 'taxRate', label: 'Default VAT %', type: 'number', step: 'any' }, s.taxRate)}</div>
@@ -558,9 +566,9 @@
           <div class="modal-foot"><button class="pill-btn solid" type="submit">Save settings</button></div>
         </form>
         <div>
-          <div class="panel" style="margin-bottom:16px"><h3>Staff <a href="#" data-act="add-staff">How to add staff</a></h3>
+          <div class="panel" style="margin-bottom:16px"><h3>Admins <a href="#" data-act="add-staff">How to add admins</a></h3>
             <div id="staffList"><p style="color:var(--muted);font-size:14px">Loading…</p></div>
-            <p style="font-size:12.5px;color:var(--muted);margin-top:12px">Owner: everything, including staff and settings. Procurement: clients, enquiries, quotations, procurement and vendors. Finance: invoices, quotations, payments, expenses and reports. The database enforces these permissions.<br><br>To add someone, ask them to open this admin page and choose <b>Create a staff account</b>. Once they've confirmed their email they appear here as <b>Needs role</b>; click them to give them a role.</p></div>
+            <p style="font-size:12.5px;color:var(--muted);margin-top:12px">You are the head admin: only you approve new admins and decide which sections each one can view or edit. The database enforces these limits, not just the menu.<br><br>To add someone, send them the admin link and ask them to choose <b>Request admin access</b>. Once they confirm their email they appear here with a <b>Review</b> button.</p></div>
           <div class="panel"><h3>Company</h3>
             <div style="font-size:14px;line-height:1.6"><b>${esc(COMPANY.name)}</b><br>${COMPANY.headOffice.map(esc).join(', ')}<br>USA: ${COMPANY.usOffice.join(', ')} · ${COMPANY.usPhone}<br>${COMPANY.phones.join(' · ')}<br>${COMPANY.email}</div>
             <div class="modal-foot" style="margin-top:16px"><button class="ghost danger left" data-act="clear-data">Delete all records</button><button class="ghost" data-act="load-demo">Load demo data</button></div></div>
@@ -573,31 +581,94 @@
     loadStaff();
   };
   let STAFF = [];
+  const SECTION_LABELS = { clients: 'Clients', enquiries: 'Website enquiries', procurement: 'Procurement', quotations: 'Quotations', invoices: 'Invoices', payments: 'Payments', expenses: 'Expenses', vendors: 'Vendors', reports: 'Reports' };
+  const ALL_EDIT = { clients: 'edit', enquiries: 'edit', procurement: 'edit', quotations: 'edit', invoices: 'edit', payments: 'edit', expenses: 'edit', vendors: 'edit', reports: 'view' };
+  const PRESETS = [
+    ['Full access', ALL_EDIT],
+    ['Procurement', { clients: 'edit', enquiries: 'edit', procurement: 'edit', vendors: 'edit', quotations: 'edit', invoices: 'view' }],
+    ['Finance', { clients: 'edit', enquiries: 'view', procurement: 'view', vendors: 'view', quotations: 'edit', invoices: 'edit', payments: 'edit', expenses: 'edit', reports: 'view' }],
+    ['View only', { clients: 'view', enquiries: 'view', procurement: 'view', quotations: 'view', invoices: 'view', payments: 'view', expenses: 'view', vendors: 'view', reports: 'view' }],
+    ['No access', {}],
+  ];
+  function accessSummary(m) {
+    if (m.role === 'Owner') return 'Full access · approves admins';
+    if (m.role === 'Pending') return 'Waiting for your approval';
+    if (m.role === 'Disabled') return 'No access';
+    const a = m.access || {};
+    const e = GT.SECTIONS.filter((k) => a[k] === 'edit').length, v = GT.SECTIONS.filter((k) => a[k] === 'view').length;
+    return !e && !v ? 'Approved, but no sections yet' : [e && `${e} can edit`, v && `${v} view only`].filter(Boolean).join(' · ');
+  }
   async function loadStaff() {
     const el = $('#staffList'); if (!el) return;
     try { STAFF = await GT.staff.list(); } catch (e) { el.textContent = e.message; return; }
-    const CH = { Owner: 'Request', Pending: 'Pending', Disabled: 'Declined' };
-    el.innerHTML = STAFF.map((m) => `<div class="mini-row" data-staff="${m.id}"><div>${esc(m.name || m.email)}${m.id === GT.user.id ? ' <small style="display:inline">(you)</small>' : ''}<small>${esc(m.email)}</small></div>${chip(CH[m.role] || 'Draft', m.role === 'Pending' ? 'Needs role' : m.role)}</div>`).join('');
+    const CH = { Owner: 'Request', Pending: 'Pending', Disabled: 'Declined', Staff: 'Accepted' };
+    const order = { Pending: 0, Owner: 1, Staff: 2, Disabled: 3 };
+    el.innerHTML = STAFF.slice().sort((a, b) => order[a.role] - order[b.role]).map((m) => `<div class="mini-row" data-staff="${m.id}">
+      <div>${esc(m.name || m.email)}${m.id === GT.user.id ? ' <small style="display:inline">(you)</small>' : ''}<small>${esc(m.email)} · ${esc(accessSummary(m))}</small></div>
+      ${m.role === 'Pending' ? '<span class="pill-btn solid sm">Review</span>' : chip(CH[m.role] || 'Draft', GT.roleLabel(m.role))}</div>`).join('');
+    const n = STAFF.filter((m) => m.role === 'Pending').length;
+    if (n !== GT.pendingAdmins) { await GT.load().catch(() => {}); renderNav('settings'); }
   }
   function staffForm(id) {
     if (!id) {
-      return modal('Adding staff', `<p style="font-size:14px;line-height:1.6">Staff create their own sign-in, so passwords are never shared:</p>
-        <ol style="font-size:14px;line-height:1.7;margin:10px 0 16px 20px"><li>Send them this link: <b>${esc(location.origin + location.pathname)}</b></li><li>They choose <b>Create a staff account</b> and confirm their email.</li><li>They appear in your staff list as <b>Needs role</b>. Click them and choose a role.</li></ol>
+      return modal('Adding admins', `<p style="font-size:14px;line-height:1.6">Admins create their own sign-in, so passwords are never shared:</p>
+        <ol style="font-size:14px;line-height:1.7;margin:10px 0 16px 20px"><li>Send them this link: <b>${esc(location.origin + location.pathname)}</b></li><li>They choose <b>Request admin access</b> and confirm their email.</li><li>They appear here as <b>Review</b>. Open them, choose what they can see and edit, then approve.</li></ol>
         <div class="modal-foot"><button class="pill-btn solid" data-close>Got it</button></div>`);
     }
-    const rec = STAFF.find((x) => x.id === id);
-    const self = id === GT.user.id;
-    formModal(self ? 'Your staff profile' : 'Edit staff', [
-      { name: 'name', label: 'Name', required: true },
-      { name: 'role', label: 'Role', type: 'select', options: self ? ['Owner'] : [['Pending', 'Pending — no access'], 'Procurement', 'Finance', 'Owner', ['Disabled', 'Disabled — access removed']] },
-    ], rec, async (d) => {
-      try { await GT.staff.update(id, d); toast('Staff updated'); } catch (e) { toast(e.message); }
+    const m0 = STAFF.find((x) => x.id === id);
+    if (!m0) return;
+    if (m0.role === 'Owner') {
+      return formModal('Head admin', [{ name: 'name', label: 'Name', required: true }], m0, async (d) => {
+        try { await GT.staff.update(id, { name: d.name }); toast('Saved'); } catch (e) { toast(e.message); } loadStaff();
+      });
+    }
+    let status = m0.role === 'Pending' ? 'Staff' : m0.role;
+    let access = { ...(m0.access || {}) };
+    const lvlBtns = (k) => (k === 'reports' ? ['none', 'view'] : ['none', 'view', 'edit'])
+      .map((l) => `<button type="button" data-k="${k}" data-l="${l}" class="${(access[k] || 'none') === l ? 'on' : ''}">${{ none: 'No access', view: 'View', edit: 'Edit' }[l]}</button>`).join('');
+    const m = modal(m0.role === 'Pending' ? 'Approve admin' : 'Admin access', `
+      <form novalidate>
+        <p class="acc-who"><b>${esc(m0.name || m0.email)}</b><br><span>${esc(m0.email)}</span></p>
+        ${field({ name: 'name', label: 'Name', required: true }, m0.name)}
+        <div class="fld">Status<div class="toggle" data-status>
+          <button type="button" data-s="Staff" class="${status === 'Staff' ? 'on' : ''}">${m0.role === 'Pending' ? 'Approve' : 'Active'}</button>
+          ${m0.role === 'Pending' ? '<button type="button" data-s="Pending" class="">Not yet</button>' : ''}
+          <button type="button" data-s="Disabled" class="${status === 'Disabled' ? 'on' : ''}">${m0.role === 'Pending' ? 'Decline' : 'Disabled'}</button></div></div>
+        <div class="acc-wrap"${status === 'Staff' ? '' : ' hidden'}>
+          <div class="fld" style="margin-bottom:6px">Quick presets</div>
+          <div class="seg acc-presets">${PRESETS.map(([n], i) => `<button type="button" data-p="${i}">${n}</button>`).join('')}</div>
+          <div class="acc-grid">${GT.SECTIONS.map((k) => `<div class="acc-row"><span>${SECTION_LABELS[k]}</span><div class="acc-lv">${lvlBtns(k)}</div></div>`).join('')}</div>
+          <p class="acc-note">View lets them see a section. Edit also lets them add, change and delete. Settings and admin approval stay with you, the head admin.</p>
+        </div>
+        <div class="modal-foot"><button type="button" class="ghost" data-close>Cancel</button><button class="pill-btn solid" type="submit">${m0.role === 'Pending' ? 'Save decision' : 'Save access'}</button></div>
+      </form>`, { wide: true });
+    const wrap = $('.acc-wrap', m);
+    const paint = () => {
+      m.querySelectorAll('.acc-lv button').forEach((b) => b.classList.toggle('on', (access[b.dataset.k] || 'none') === b.dataset.l));
+      m.querySelectorAll('[data-s]').forEach((b) => b.classList.toggle('on', b.dataset.s === status));
+      wrap.hidden = status !== 'Staff';
+    };
+    m.addEventListener('click', (e) => {
+      const lv = e.target.closest('.acc-lv button'); if (lv) { access[lv.dataset.k] = lv.dataset.l; return paint(); }
+      const p = e.target.closest('[data-p]'); if (p) { access = { ...PRESETS[Number(p.dataset.p)][1] }; return paint(); }
+      const st = e.target.closest('[data-s]'); if (st) { status = st.dataset.s; return paint(); }
+    });
+    $('form', m).addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const name = $('[name=name]', m).value.trim() || m0.name;
+      if (status === 'Staff' && !GT.SECTIONS.some((k) => access[k] && access[k] !== 'none') && !confirm('This admin will be approved but can\'t see any section yet. Continue?')) return;
+      const clean = {}; GT.SECTIONS.forEach((k) => { if (access[k] && access[k] !== 'none') clean[k] = access[k]; });
+      try {
+        await GT.staff.update(id, { name, role: status, access: clean });
+        closeModal();
+        toast(m0.role === 'Pending' ? (status === 'Staff' ? 'Admin approved' : status === 'Disabled' ? 'Request declined' : 'Saved') : 'Access updated');
+      } catch (err) { toast(err.message); }
       loadStaff();
     });
   }
   function meMenu() {
     const u = GT.user;
-    const m = modal('Your account', `<p style="font-size:14px;margin-bottom:16px"><b>${esc(u.name)}</b><br><span style="color:var(--muted)">${esc(u.email)} · ${esc(u.role)}</span></p>
+    const m = modal('Your account', `<p style="font-size:14px;margin-bottom:16px"><b>${esc(u.name)}</b><br><span style="color:var(--muted)">${esc(u.email)} · ${esc(GT.roleLabel(u.role))}</span></p>
       <form novalidate>${field({ name: 'current', label: 'Current password', type: 'password' })}${field({ name: 'password', label: 'New password (at least 8 characters)', type: 'password' })}
       <div class="modal-foot"><button type="button" class="ghost danger left" data-signout>Sign out</button><button class="pill-btn solid" type="submit">Change password</button></div></form>`);
     $('[data-signout]', m).addEventListener('click', async () => { await GT.db.flush(); await GT.auth.signOut(); location.hash = ''; location.reload(); });
@@ -725,9 +796,9 @@
     </div>`;
   }
   const AUTH = {
-    setup: { title: 'Set up your admin', sub: 'Create the Owner account. This is a one-time step: the first account becomes the Owner, who then approves other staff.', fields: ['name', 'email', 'password'], btn: 'Create Owner account' },
+    setup: { title: 'Set up your admin', sub: 'Create the head admin account. This is a one-time step: the head admin approves every other admin.', fields: ['name', 'email', 'password'], btn: 'Create Owner account' },
     login: { title: 'Staff sign-in', sub: 'Sign in to manage clients, procurement and invoices.', fields: ['email', 'password'], btn: 'Sign in' },
-    signup: { title: 'Create a staff account', sub: 'After you confirm your email, the Owner gives your account a role before you can see any records.', fields: ['name', 'email', 'password'], btn: 'Create account' },
+    signup: { title: 'Request admin access', sub: 'After you confirm your email, the head admin reviews your request and decides which sections you can use.', fields: ['name', 'email', 'password'], btn: 'Request access' },
     reset: { title: 'Reset your password', sub: "Enter your email and we'll send you a link to choose a new password.", fields: ['email'], btn: 'Send reset link' },
     newpass: { title: 'Choose a new password', sub: 'Enter a new password for your account.', fields: ['password'], btn: 'Save password' },
   };
@@ -742,7 +813,7 @@
       password: field({ name: 'password', label: mode === 'login' ? 'Password' : 'Password (at least 8 characters)', type: 'password', required: true }),
     };
     const links = {
-      login: '<a href="#" data-auth="reset">Forgot password?</a><a href="#" data-auth="signup">Create a staff account</a>',
+      login: '<a href="#" data-auth="reset">Forgot password?</a><a href="#" data-auth="signup">Request admin access</a>',
       signup: '<a href="#" data-auth="login">Already have an account? Sign in</a>',
       reset: '<a href="#" data-auth="login">Back to sign-in</a>',
     }[mode] || '';
@@ -788,7 +859,7 @@
     main.innerHTML = `<div class="auth">${authBg()}<div class="auth-card">
       <img src="../assets/logo-black.svg" alt="Gorpat Trading Limited">
       <h1>${disabled ? 'Account disabled' : 'Waiting for approval'}</h1>
-      <p class="auth-sub">${disabled ? 'This account no longer has access. Contact the Owner if you think this is a mistake.' : `You're signed in as <b>${esc(me.email)}</b>. The Owner needs to give your account a role in Staff &amp; settings. Once they have, press Check again.`}</p>
+      <p class="auth-sub">${disabled ? 'This account no longer has access. Contact the head admin if you think this is a mistake.' : `You're signed in as <b>${esc(me.email)}</b>. The head admin needs to approve your account and choose what you can access. Once they have, press Check again.`}</p>
       <button class="pill-btn solid auth-btn" data-w="again">Check again</button>
       <div class="auth-links"><a href="#" data-w="out">Sign out</a></div>
     </div></div>`;

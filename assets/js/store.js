@@ -25,6 +25,23 @@
   };
   // Mirror of can_read / can_write in supabase/schema.sql — used only to shape the UI.
   const COLS = ['clients', 'vendors', 'invoices', 'quotations', 'procurement', 'payments', 'expenses', 'enquiries'];
+  // Mirror of can_read / can_write in supabase/002_head_admin_access.sql — shapes the UI only;
+  // the database enforces the real rules.
+  const SECTIONS = ['clients', 'enquiries', 'procurement', 'quotations', 'invoices', 'payments', 'expenses', 'vendors', 'reports'];
+  function permsFor(me) {
+    if (!me) return NONE;
+    if (me.role === 'Owner') return { read: COLS, write: COLS, reports: true, settings: true, head: true };
+    if (ROLES[me.role]) return { ...ROLES[me.role], head: false }; // legacy roles (before migration 002)
+    if (me.role !== 'Staff') return NONE;
+    const a = me.access || {};
+    const lvl = (k) => ({ edit: 2, view: 1 }[a[k]] || 0);
+    const read = COLS.filter((c) => lvl(c) >= 1
+      || (c === 'clients' && Math.max(lvl('invoices'), lvl('quotations'), lvl('procurement'), lvl('payments')) >= 1)
+      || (c === 'vendors' && Math.max(lvl('procurement'), lvl('expenses')) >= 1)
+      || (c === 'invoices' && Math.max(lvl('payments'), lvl('reports')) >= 1)
+      || ((c === 'payments' || c === 'expenses') && lvl('reports') >= 1));
+    return { read, write: COLS.filter((c) => lvl(c) === 2), reports: lvl('reports') >= 1, settings: false, head: false };
+  }
   const ROLES = {
     Owner: { read: COLS, write: COLS, reports: true, settings: true },
     Procurement: { read: ['clients', 'vendors', 'invoices', 'quotations', 'procurement', 'enquiries'], write: ['clients', 'vendors', 'quotations', 'procurement', 'enquiries'], reports: false, settings: false },
@@ -126,7 +143,9 @@
 
   async function profile() {
     if (!session || !session.user) return null;
-    const rows = await rest('GET', `staff?id=eq.${encodeURIComponent(session.user.id)}&select=id,name,email,role`);
+    // falls back to the pre-002 columns so the admin keeps working until the migration is run
+    const q = `staff?id=eq.${encodeURIComponent(session.user.id)}&select=`;
+    const rows = await rest('GET', q + 'id,name,email,role,access').catch((e) => (e.status === 400 ? rest('GET', q + 'id,name,email,role') : Promise.reject(e)));
     return rows[0] || null;
   }
 
@@ -134,7 +153,9 @@
     await queue;
     const me = await profile();
     if (!me) { const e = new Error('Please sign in'); e.status = 401; throw e; }
-    const perms = ROLES[me.role] || NONE;
+    const perms = permsFor(me);
+    let pendingAdmins = 0;
+    if (perms.head) pendingAdmins = (await rest('GET', 'staff?role=eq.Pending&select=id')).length;
     const collections = {};
     COLS.forEach((c) => { collections[c] = []; });
     let settings = { ...DEFAULT_SETTINGS };
@@ -147,7 +168,7 @@
         if (rows.length < 1000) break;
       }
     }
-    cache = { settings, collections, user: me, perms };
+    cache = { settings, collections, user: me, perms, pendingAdmins };
     return cache;
   }
 
@@ -252,7 +273,8 @@
 
   /* ---------- staff (Owner) ---------- */
   const staff = {
-    list: () => rest('GET', 'staff?select=id,name,email,role&order=created_at.asc'),
+    list: () => rest('GET', 'staff?select=id,name,email,role,access,created_at&order=created_at.asc')
+      .catch((e) => (e.status === 400 ? rest('GET', 'staff?select=id,name,email,role,created_at&order=created_at.asc') : Promise.reject(e))),
     async update(id, patch) {
       const rows = await rest('PATCH', `staff?id=eq.${encodeURIComponent(id)}&select=id`, patch, RET);
       if (!rows.length) throw new Error("Your role doesn't allow this");
@@ -287,6 +309,8 @@
   window.GT = {
     db, auth, staff, load, clearAll, loadDemo, COMPANY, totals, money, moneyShort, esc, uid, iso, daysAgo,
     get user() { return cache.user; }, get perms() { return cache.perms; },
+    get pendingAdmins() { return cache.pendingAdmins || 0; }, SECTIONS, permsFor,
+    roleLabel(r) { return { Owner: 'Head admin', Staff: 'Admin', Pending: 'Awaiting approval', Disabled: 'Disabled' }[r] || r; },
     can(kind, col) { const p = cache.perms || NONE; return !!(kind === 'read' || kind === 'write' ? p[kind].includes(col) : p[kind]); },
   };
 })();

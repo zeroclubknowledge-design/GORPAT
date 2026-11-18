@@ -14,25 +14,26 @@ Public website plus a staff admin dashboard (clients, procurement, invoices, quo
 ## First-time setup
 
 1. In Supabase → **SQL Editor** → New query, paste all of `supabase/schema.sql` and **Run**.
-2. Open `/admin/` and create the **Owner** account straight away (the first account created becomes the Owner). Confirm it from the email Supabase sends.
+2. Run `supabase/002_head_admin_access.sql`, then `select public.make_head_admin('you@example.com');` with your email (see below).
 3. In Supabase → **Authentication → URL Configuration**:
    - **Site URL**: `https://zeroclubknowledge-design.github.io/GORPAT/admin/`
    - **Redirect URLs**: add the same URL (and `http://localhost:5520/admin/` for local testing).
 
    This makes the confirmation and password-reset emails link back to the admin.
-4. In the admin, open **Staff & settings** and enter your real bank details (they print on invoices).
+4. In the admin, open **Admins & settings** and enter your real bank details (they print on invoices).
 
-## Adding staff
+## Head admin and admin access
 
-Staff open the admin, choose **Create a staff account**, and confirm their email. They then show up under Staff & settings as **Needs role**; the Owner clicks them and assigns a role. To remove access, set their role to **Disabled**.
+Run `supabase/002_head_admin_access.sql` in the SQL Editor (after `schema.sql`), then make yourself head admin:
 
-| Role | Can do |
-|---|---|
-| Owner | Everything, including staff roles, settings, loading demo data, deleting all records |
-| Procurement | Clients, enquiries, quotations, procurement orders, vendors (can view invoices) |
-| Finance | Invoices, quotations, payments, expenses, reports, clients |
+```sql
+select public.make_head_admin('you@example.com');
+```
 
-These rules are enforced inside the database (Row Level Security), not just hidden in the menu.
+- There is exactly **one head admin**. Only the head admin approves new admins, sets what each admin can access, and changes settings. The role can only be transferred by running `make_head_admin` again in the SQL Editor.
+- New admins open the admin page, choose **Request admin access**, and confirm their email. They wait with no access until the head admin reviews them under **Admins & settings**.
+- For each admin, the head admin sets every section to **No access**, **View** or **Edit**: Clients, Website enquiries, Procurement, Quotations, Invoices, Payments, Expenses, Vendors, Reports. Presets (Full access, Procurement, Finance, View only) fill the grid in one tap. Set an admin to **Disabled** to remove all access.
+- These limits are enforced in the database (Row Level Security), not just hidden in the menu.
 
 ## How the website and admin connect
 
@@ -46,8 +47,7 @@ Visitors can only call those two functions: input is validated, submissions are 
 - `config.js` contains the **anon** key, which is public by design. Never put the `service_role` key or the database password in this repo.
 - Supabase stores passwords (hashed) and handles sign-in; sessions refresh automatically.
 - Every change to business records is written to the `audit` table (Owner can read it in Supabase).
-- If the wrong account ever becomes Owner, run in the SQL Editor:
-  `update public.staff set role = 'Owner' where email = 'you@example.com';`
+- If the wrong account ever becomes head admin, run `select public.make_head_admin('you@example.com');` in the SQL Editor.
 
 ## Hosting
 
