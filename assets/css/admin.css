@@ -426,3 +426,14 @@ body.booting .side, body.booting .main { visibility: hidden; }
   .auth-links { flex-direction: column; align-items: center; gap: 0; margin-top: 8px; }
   .auth-back { margin-top: 4px; min-height: 44px; display: flex; align-items: center; justify-content: center; }
 }
+
+/* Sign-in screens fill exactly the visible screen: no page scroll, no strip
+   below on mobile (100vh is taller than the visible area when the browser
+   bar shows). The screen itself scrolls only if the card can't fit, e.g. a
+   phone in landscape with the keyboard open. */
+html:has(body.auth-mode), html:has(body.booting) { background: #0a0a0c; overscroll-behavior: none; }
+body.auth-mode, body.booting { overflow: hidden; overscroll-behavior: none; }
+body.auth-mode .main { min-height: 0; }
+body.auth-mode .auth { place-items: start center; position: fixed; inset: 0; min-height: 0; height: auto; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+body.auth-mode .auth-bg { position: fixed; }
+body.auth-mode .auth-card { margin: auto; }
