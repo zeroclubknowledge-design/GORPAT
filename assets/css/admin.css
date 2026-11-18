@@ -301,3 +301,8 @@ body.auth-mode .side { display: none; }
 .auth-back { display: block; text-align: center; margin-top: 16px; font-size: 13px; color: var(--muted); }
 .auth-back:hover { color: var(--orange); }
 .auth code { background: #f2f2f6; padding: 2px 6px; border-radius: 5px; }
+.auth-links { display: flex; justify-content: space-between; gap: 10px; margin-top: 14px; font-size: 13.5px; }
+.auth-links a { color: var(--orange-d); font-weight: 600; }
+.auth-links a:only-child { margin: 0 auto; }
+.auth-note.ok { background: #e2f6ea; color: #13623a; }
+.auth-sub b { color: var(--ink); }

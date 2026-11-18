@@ -543,9 +543,9 @@
           <div class="modal-foot"><button class="pill-btn solid" type="submit">Save settings</button></div>
         </form>
         <div>
-          <div class="panel" style="margin-bottom:16px"><h3>Staff <a href="#" data-act="add-staff">+ Add staff</a></h3>
+          <div class="panel" style="margin-bottom:16px"><h3>Staff <a href="#" data-act="add-staff">How to add staff</a></h3>
             <div id="staffList"><p style="color:var(--muted);font-size:14px">Loading…</p></div>
-            <p style="font-size:12.5px;color:var(--muted);margin-top:12px">Owner: everything, including staff and settings. Procurement: clients, enquiries, quotations, procurement and vendors. Finance: invoices, quotations, payments, expenses and reports. The server enforces these permissions.</p></div>
+            <p style="font-size:12.5px;color:var(--muted);margin-top:12px">Owner: everything, including staff and settings. Procurement: clients, enquiries, quotations, procurement and vendors. Finance: invoices, quotations, payments, expenses and reports. The database enforces these permissions.<br><br>To add someone, ask them to open this admin page and choose <b>Create a staff account</b>. Once they've confirmed their email they appear here as <b>Needs role</b>; click them to give them a role.</p></div>
           <div class="panel"><h3>Company</h3>
             <div style="font-size:14px;line-height:1.6"><b>${esc(COMPANY.name)}</b><br>${COMPANY.headOffice.map(esc).join(', ')}<br>USA: ${COMPANY.usOffice.join(', ')} · ${COMPANY.usPhone}<br>${COMPANY.phones.join(' · ')}<br>${COMPANY.email}</div>
             <div class="modal-foot" style="margin-top:16px"><button class="ghost danger left" data-act="clear-data">Delete all records</button><button class="ghost" data-act="load-demo">Load demo data</button></div></div>
@@ -560,30 +560,35 @@
   let STAFF = [];
   async function loadStaff() {
     const el = $('#staffList'); if (!el) return;
-    try { STAFF = await GT.api('GET', 'staff'); } catch (e) { el.textContent = e.message; return; }
-    el.innerHTML = STAFF.map((m) => `<div class="mini-row" data-staff="${m.id}"><div>${esc(m.name)}${m.id === GT.user.id ? ' <small style="display:inline">(you)</small>' : ''}<small>${esc(m.email)}</small></div>${chip(m.role === 'Owner' ? 'Request' : 'Draft', m.role)}</div>`).join('');
+    try { STAFF = await GT.staff.list(); } catch (e) { el.textContent = e.message; return; }
+    const CH = { Owner: 'Request', Pending: 'Pending', Disabled: 'Declined' };
+    el.innerHTML = STAFF.map((m) => `<div class="mini-row" data-staff="${m.id}"><div>${esc(m.name || m.email)}${m.id === GT.user.id ? ' <small style="display:inline">(you)</small>' : ''}<small>${esc(m.email)}</small></div>${chip(CH[m.role] || 'Draft', m.role === 'Pending' ? 'Needs role' : m.role)}</div>`).join('');
   }
   function staffForm(id) {
-    const rec = id ? STAFF.find((x) => x.id === id) : { role: 'Procurement' };
-    formModal(id ? 'Edit staff' : 'Add staff', [
-      { name: 'name', label: 'Name', required: true }, { name: 'email', label: 'Email (used to sign in)', type: 'email', required: true },
-      { name: 'role', label: 'Role', type: 'select', options: ['Owner', 'Procurement', 'Finance'] },
-      { name: 'password', label: id ? 'New password (leave blank to keep the current one)' : 'Temporary password (at least 8 characters)', type: 'password', required: !id },
+    if (!id) {
+      return modal('Adding staff', `<p style="font-size:14px;line-height:1.6">Staff create their own sign-in, so passwords are never shared:</p>
+        <ol style="font-size:14px;line-height:1.7;margin:10px 0 16px 20px"><li>Send them this link: <b>${esc(location.origin + location.pathname)}</b></li><li>They choose <b>Create a staff account</b> and confirm their email.</li><li>They appear in your staff list as <b>Needs role</b>. Click them and choose a role.</li></ol>
+        <div class="modal-foot"><button class="pill-btn solid" data-close>Got it</button></div>`);
+    }
+    const rec = STAFF.find((x) => x.id === id);
+    const self = id === GT.user.id;
+    formModal(self ? 'Your staff profile' : 'Edit staff', [
+      { name: 'name', label: 'Name', required: true },
+      { name: 'role', label: 'Role', type: 'select', options: self ? ['Owner'] : [['Pending', 'Pending — no access'], 'Procurement', 'Finance', 'Owner', ['Disabled', 'Disabled — access removed']] },
     ], rec, async (d) => {
-      if (!d.password) delete d.password;
-      try { await GT.api(id ? 'PUT' : 'POST', 'staff' + (id ? '/' + id : ''), d); toast(id ? 'Staff updated' : 'Staff account created'); } catch (e) { toast(e.message); }
+      try { await GT.staff.update(id, d); toast('Staff updated'); } catch (e) { toast(e.message); }
       loadStaff();
-    }, id && id !== GT.user.id ? { onDelete: async () => { try { await GT.api('DELETE', 'staff/' + id); toast('Staff removed'); } catch (e) { toast(e.message); } loadStaff(); } } : {});
+    });
   }
   function meMenu() {
     const u = GT.user;
     const m = modal('Your account', `<p style="font-size:14px;margin-bottom:16px"><b>${esc(u.name)}</b><br><span style="color:var(--muted)">${esc(u.email)} · ${esc(u.role)}</span></p>
       <form novalidate>${field({ name: 'current', label: 'Current password', type: 'password' })}${field({ name: 'password', label: 'New password (at least 8 characters)', type: 'password' })}
       <div class="modal-foot"><button type="button" class="ghost danger left" data-signout>Sign out</button><button class="pill-btn solid" type="submit">Change password</button></div></form>`);
-    $('[data-signout]', m).addEventListener('click', async () => { await GT.db.flush(); await GT.api('POST', 'auth/logout'); location.reload(); });
+    $('[data-signout]', m).addEventListener('click', async () => { await GT.db.flush(); await GT.auth.signOut(); location.hash = ''; location.reload(); });
     $('form', m).addEventListener('submit', async (e) => {
       e.preventDefault(); const d = Object.fromEntries(new FormData(e.target));
-      try { await GT.api('POST', 'auth/password', d); closeModal(); toast('Password changed'); } catch (err) { toast(err.message); }
+      try { await GT.auth.changePassword(d.current, d.password); closeModal(); toast('Password changed'); } catch (err) { toast(err.message); }
     });
   }
 
@@ -626,7 +631,7 @@
       case 'load-demo': case 'clear-data': {
         const clear = act === 'clear-data';
         if (!confirm(clear ? 'Delete ALL clients, invoices, quotations, payments and other records? Staff accounts and settings are kept. This cannot be undone.' : 'Replace all records with the demo data? Everything currently entered will be removed.')) return;
-        GT.api('POST', 'demo', { mode: clear ? 'clear' : 'demo' }).then(() => GT.load()).then(() => { toast(clear ? 'All records deleted' : 'Demo data loaded'); route(); }).catch((err) => toast(err.message));
+        (clear ? GT.clearAll() : GT.loadDemo()).then(() => GT.load()).then(() => { toast(clear ? 'All records deleted' : 'Demo data loaded'); route(); }).catch((err) => toast(err.message));
         return;
       }
       // editor
@@ -689,51 +694,101 @@
     try { await GT.load(); if (ED && ED.saved) ED = null; route(); } catch (e) { /* ignore */ }
   });
 
-  function authScreen(mode, note = '') {
+  const AUTH = {
+    setup: { title: 'Set up your admin', sub: 'Create the Owner account. This is a one-time step: the first account becomes the Owner, who then approves other staff.', fields: ['name', 'email', 'password'], btn: 'Create Owner account' },
+    login: { title: 'Staff sign-in', sub: 'Sign in to manage clients, procurement and invoices.', fields: ['email', 'password'], btn: 'Sign in' },
+    signup: { title: 'Create a staff account', sub: 'After you confirm your email, the Owner gives your account a role before you can see any records.', fields: ['name', 'email', 'password'], btn: 'Create account' },
+    reset: { title: 'Reset your password', sub: "Enter your email and we'll send you a link to choose a new password.", fields: ['email'], btn: 'Send reset link' },
+    newpass: { title: 'Choose a new password', sub: 'Enter a new password for your account.', fields: ['password'], btn: 'Save password' },
+  };
+  function authScreen(mode, note = '', noteKind = '') {
     booted = false;
     document.body.classList.add('auth-mode');
-    const setup = mode === 'setup';
+    const A = AUTH[mode];
+    const F = {
+      name: field({ name: 'name', label: 'Your name', required: true }),
+      email: field({ name: 'email', label: 'Email', type: 'email', required: true }),
+      password: field({ name: 'password', label: mode === 'login' ? 'Password' : 'Password (at least 8 characters)', type: 'password', required: true }),
+    };
+    const links = {
+      login: '<a href="#" data-auth="reset">Forgot password?</a><a href="#" data-auth="signup">Create a staff account</a>',
+      signup: '<a href="#" data-auth="login">Already have an account? Sign in</a>',
+      reset: '<a href="#" data-auth="login">Back to sign-in</a>',
+    }[mode] || '';
     main.innerHTML = `<div class="auth"><form class="auth-card" novalidate>
       <img src="../assets/logo-black.svg" alt="Gorpat Trading Limited">
-      <h1>${setup ? 'Set up your admin' : 'Staff sign-in'}</h1>
-      <p class="auth-sub">${setup ? 'Create the Owner account. You can add other staff from Staff &amp; settings afterwards.' : 'Sign in to manage clients, procurement and invoices.'}</p>
-      ${note ? `<p class="auth-note">${esc(note)}</p>` : ''}
-      ${setup ? field({ name: 'name', label: 'Your name', required: true }) : ''}
-      ${field({ name: 'email', label: 'Email', type: 'email', required: true })}
-      ${field({ name: 'password', label: setup ? 'Password (at least 8 characters)' : 'Password', type: 'password', required: true })}
-      ${setup ? '<label class="auth-check"><input type="checkbox" name="demo"> Start with demo data so you can explore</label>' : ''}
+      <h1>${A.title}</h1>
+      <p class="auth-sub">${A.sub}</p>
+      ${note ? `<p class="auth-note ${noteKind}">${esc(note)}</p>` : ''}
+      ${A.fields.map((f) => F[f]).join('')}
       <p class="auth-err" role="alert"></p>
-      <button class="pill-btn solid auth-btn" type="submit">${setup ? 'Create account' : 'Sign in'}</button>
+      <button class="pill-btn solid auth-btn" type="submit">${A.btn}</button>
+      ${links ? `<div class="auth-links">${links}</div>` : ''}
       <a class="auth-back" href="../">← Back to website</a>
     </form></div>`;
     const form = $('.auth-card');
-    $('[name=email]', form).setAttribute('autocomplete', 'username');
-    $('[name=password]', form).setAttribute('autocomplete', setup ? 'new-password' : 'current-password');
-    setTimeout(() => form.querySelector('input').focus(), 30);
+    const em = $('[name=email]', form); if (em) em.setAttribute('autocomplete', 'username');
+    const pw = $('[name=password]', form); if (pw) pw.setAttribute('autocomplete', mode === 'login' ? 'current-password' : 'new-password');
+    setTimeout(() => { const i = form.querySelector('input'); if (i) i.focus(); }, 30);
+    form.addEventListener('click', (e) => { const a = e.target.closest('[data-auth]'); if (a) { e.preventDefault(); authScreen(a.dataset.auth); } });
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
-      const d = Object.fromEntries(new FormData(form)); d.demo = !!d.demo;
-      const btn = $('.auth-btn', form); btn.disabled = true;
-      try { await GT.api('POST', setup ? 'auth/setup' : 'auth/login', d); await start(); }
-      catch (err) { $('.auth-err', form).textContent = err.message; btn.disabled = false; }
+      const d = Object.fromEntries(new FormData(form));
+      const err = $('.auth-err', form); const btn = $('.auth-btn', form);
+      if ((mode === 'setup' || mode === 'signup' || mode === 'newpass') && String(d.password || '').length < 8) { err.textContent = 'Password must be at least 8 characters'; return; }
+      btn.disabled = true; err.textContent = '';
+      try {
+        if (mode === 'login') { await GT.auth.signIn(d.email.trim(), d.password); return await start(); }
+        if (mode === 'setup' || mode === 'signup') {
+          const r = await GT.auth.signUp(d.name.trim(), d.email.trim(), d.password);
+          if (!r.confirm) return await start();
+          return authScreen('login', `We've sent a confirmation link to ${d.email.trim()}. Open it, then sign in here.`, 'ok');
+        }
+        if (mode === 'reset') { await GT.auth.sendReset(d.email.trim()); return authScreen('login', 'If that email has an account, a reset link is on its way.', 'ok'); }
+        if (mode === 'newpass') { await GT.auth.setPassword(d.password); toast('Password updated'); return await start(); }
+      } catch (ex) { err.textContent = ex.message; btn.disabled = false; }
+    });
+  }
+  function waitingScreen(me) {
+    booted = false;
+    document.body.classList.add('auth-mode');
+    const disabled = me.role === 'Disabled';
+    main.innerHTML = `<div class="auth"><div class="auth-card">
+      <img src="../assets/logo-black.svg" alt="Gorpat Trading Limited">
+      <h1>${disabled ? 'Account disabled' : 'Waiting for approval'}</h1>
+      <p class="auth-sub">${disabled ? 'This account no longer has access. Contact the Owner if you think this is a mistake.' : `You're signed in as <b>${esc(me.email)}</b>. The Owner needs to give your account a role in Staff &amp; settings. Once they have, press Check again.`}</p>
+      <button class="pill-btn solid auth-btn" data-w="again">Check again</button>
+      <div class="auth-links"><a href="#" data-w="out">Sign out</a></div>
+    </div></div>`;
+    main.querySelector('.auth-card').addEventListener('click', async (e) => {
+      const w = e.target.closest('[data-w]'); if (!w) return; e.preventDefault();
+      if (w.dataset.w === 'out') { await GT.auth.signOut(); return authScreen('login'); }
+      start().catch((ex) => toast(ex.message));
     });
   }
 
   async function start() {
-    await GT.load();
+    const c = await GT.load();
+    if (!['Owner', 'Procurement', 'Finance'].includes(c.user.role)) return waitingScreen(c.user);
     document.body.classList.remove('auth-mode');
     booted = true;
+    if (!location.hash || location.hash === '#') history.replaceState(null, '', '#/overview');
     route();
   }
 
   (async function boot() {
     try {
-      const st = await GT.api('GET', 'auth/state');
-      if (st.needsSetup) return authScreen('setup');
-      if (!st.user) return authScreen('login');
-      await start();
+      const back = GT.auth.consumeRedirect();
+      if (back && back.error) return authScreen('login', back.error);
+      if (back && back.type === 'recovery') { await GT.auth.whoami(); return authScreen('newpass'); }
+      if (back) { await GT.auth.whoami(); return await start(); }
+      if (GT.auth.signedIn) {
+        try { return await start(); } catch (e) { if (e.status !== 401) throw e; await GT.auth.signOut(); }
+      }
+      if (await GT.auth.needsSetup()) return authScreen('setup');
+      authScreen('login');
     } catch (e) {
-      main.innerHTML = '<div class="auth"><div class="auth-card"><h1>Can\'t reach the server</h1><p class="auth-sub">Start it with <code>node server/server.js</code> and reload this page.</p></div></div>';
+      main.innerHTML = `<div class="auth"><div class="auth-card"><h1>Can't reach the database</h1><p class="auth-sub">${esc(e.message)}. Check your internet connection and reload this page. If this is a new install, make sure <code>supabase/schema.sql</code> has been run in the Supabase SQL Editor.</p></div></div>`;
     }
   })();
 })();

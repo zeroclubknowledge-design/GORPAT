@@ -1,67 +1,67 @@
-# Gorpat Trading Limited — website, admin and API
+# Gorpat Trading Limited — website and admin
 
-Public website, staff admin dashboard (clients, procurement, invoices, quotations, expenses, payments, vendors, reports) and a backend API, all served by one small Node.js server. There are **no dependencies to install**: the server only uses what ships with Node, including its built-in SQLite database.
+Public website plus a staff admin dashboard (clients, procurement, invoices, quotations, expenses, payments, vendors, reports), backed by **Supabase** (Postgres database + sign-in). The site itself is plain HTML/CSS/JS with no build step and no libraries, so it can be hosted for free on GitHub Pages.
 
 | Path | What it is |
 |---|---|
 | `index.html` | Public website |
-| `admin/` | Admin dashboard (staff sign-in required) |
-| `server/server.js` | Web server + JSON API, sign-in, roles |
-| `server/seed.js` | Optional demo data |
-| `server/data/gorpat.db` | The database (created on first run, **not** in git) |
-| `assets/` | Logo (vector, from the brand PDF), styles and scripts |
+| `admin/` | Admin dashboard (staff sign-in) |
+| `assets/js/config.js` | Supabase project URL and **public** anon key |
+| `assets/js/store.js` | Talks to Supabase (database + auth) |
+| `supabase/schema.sql` | Tables, roles and security rules — run once in the Supabase SQL Editor |
+| `assets/logo-*.svg`, `assets/mark*.svg` | Vector logo extracted from the brand PDF |
 
-## Run it
+## First-time setup
 
-Requires Node.js 22.13 or newer.
+1. In Supabase → **SQL Editor** → New query, paste all of `supabase/schema.sql` and **Run**.
+2. Open `/admin/` and create the **Owner** account straight away (the first account created becomes the Owner). Confirm it from the email Supabase sends.
+3. In Supabase → **Authentication → URL Configuration**:
+   - **Site URL**: `https://zeroclubknowledge-design.github.io/GORPAT/admin/`
+   - **Redirect URLs**: add the same URL (and `http://localhost:5520/admin/` for local testing).
 
-```bash
-npm start
-```
+   This makes the confirmation and password-reset emails link back to the admin.
+4. In the admin, open **Staff & settings** and enter your real bank details (they print on invoices).
 
-Open http://localhost:5520 for the website and http://localhost:5520/admin/ for the dashboard.
+## Adding staff
 
-The first time you open the admin you'll see **Set up your admin**: create the Owner account (optionally with demo data to explore). After that, the setup screen is gone for good and everyone signs in. The Owner adds other staff in **Staff & settings**.
-
-## Roles
+Staff open the admin, choose **Create a staff account**, and confirm their email. They then show up under Staff & settings as **Needs role**; the Owner clicks them and assigns a role. To remove access, set their role to **Disabled**.
 
 | Role | Can do |
 |---|---|
-| Owner | Everything, including staff accounts, settings, loading demo data and deleting all records |
+| Owner | Everything, including staff roles, settings, loading demo data, deleting all records |
 | Procurement | Clients, enquiries, quotations, procurement orders, vendors (can view invoices) |
 | Finance | Invoices, quotations, payments, expenses, reports, clients |
 
-Permissions are checked by the server on every request, not just hidden in the menu.
+These rules are enforced inside the database (Row Level Security), not just hidden in the menu.
 
 ## How the website and admin connect
 
-- Website **Request a quotation** → `POST /api/public/quote` → appears in admin **Quotations** as "Website request".
-- Website **Client enquiries** → `POST /api/public/enquiry` → appears in admin **Clients › Enquiries**.
+- **Request a quotation** → `submit_quote` → appears in admin **Quotations** as "Website request".
+- **Client enquiries** → `submit_enquiry` → appears in **Clients › Enquiries**.
 
-Both public endpoints validate input, are rate-limited per visitor, and have a hidden spam-trap field.
+Visitors can only call those two functions: input is validated, submissions are rate-limited per visitor, and a hidden field traps spam bots. They cannot read any data.
 
 ## Security notes
 
-- Passwords are hashed with scrypt; sessions are random tokens stored hashed, sent as `HttpOnly`, `SameSite=Strict` cookies, valid 7 days.
-- Sign-in attempts are rate-limited; requests from other websites are rejected.
-- Only `index.html`, `admin/` and `assets/` are served — the server code and database are never reachable from the web.
-- Every change is written to an `audit` table (who, what, when).
+- `config.js` contains the **anon** key, which is public by design. Never put the `service_role` key or the database password in this repo.
+- Supabase stores passwords (hashed) and handles sign-in; sessions refresh automatically.
+- Every change to business records is written to the `audit` table (Owner can read it in Supabase).
+- If the wrong account ever becomes Owner, run in the SQL Editor:
+  `update public.staff set role = 'Owner' where email = 'you@example.com';`
 
-## Deploying
+## Hosting
 
-Any host that runs a long-lived Node process with a persistent disk works (a VPS, Render, Railway, Fly.io, etc.):
+GitHub Pages serves the site from the `main` branch: website at `https://zeroclubknowledge-design.github.io/GORPAT/`, admin at `.../GORPAT/admin/`. Any static host (Netlify, Vercel, Cloudflare Pages) works the same way.
 
-1. Start command: `npm start`
-2. Environment variables:
-   - `PORT` — the port the host gives you
-   - `DATA_DIR` — a folder on a **persistent disk** (otherwise the database is lost on redeploy)
-   - `COOKIE_SECURE=1` — when the site is on HTTPS (it should be)
-   - `TRUST_PROXY=1` — when running behind the host's proxy/load balancer
-3. Back up `DATA_DIR/gorpat.db` regularly — it holds all business records.
+## Run locally
 
-Serverless static hosts (GitHub Pages, Netlify static) can't run the API by themselves.
+```bash
+python -m http.server 5520
+```
+
+Then open http://localhost:5520 — it uses the same Supabase project as the live site.
 
 ## Before going live
 
-- Set your real bank details in **Staff & settings** (they print on invoices).
 - Replace the stock hero photo (Unsplash) with your own photography.
+- Supabase's built-in email sender is limited to a few emails per hour; for many staff sign-ups, add your own SMTP under Authentication → Emails.

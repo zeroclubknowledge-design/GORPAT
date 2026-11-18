@@ -1,7 +1,0 @@
-{
-  "name": "gorpat-trading",
-  "private": true,
-  "description": "Gorpat Trading Limited website, admin dashboard and API",
-  "scripts": { "start": "node server/server.js" },
-  "engines": { "node": ">=22.13" }
-}

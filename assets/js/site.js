@@ -36,9 +36,14 @@
     const btn = $('.submit', f);
     btn.disabled = true; msg(f, 'Sending…', '');
     try {
-      const res = await fetch('/api/public/' + endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+      const C = window.GT_CONFIG;
+      const res = await fetch(`${C.supabaseUrl}/rest/v1/rpc/submit_${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', apikey: C.supabaseAnonKey, Authorization: 'Bearer ' + C.supabaseAnonKey },
+        body: JSON.stringify({ p: data }),
+      });
       const out = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(out.error || 'Something went wrong.');
+      if (!res.ok) throw new Error((out && out.message) || 'Something went wrong.');
       f.reset();
       msg(f, okText, 'ok');
     } catch (err) {
