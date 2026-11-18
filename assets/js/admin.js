@@ -709,6 +709,21 @@
     try { await GT.load(); if (ED && ED.saved) ED = null; route(); } catch (e) { /* ignore */ }
   });
 
+  // Animated brand backdrop for sign-in screens. If GT_CONFIG.signinVideo is set
+  // (e.g. a Higgsfield clip in assets/video/), it plays underneath the light effects.
+  function authBg() {
+    const v = (window.GT_CONFIG && window.GT_CONFIG.signinVideo) || '';
+    const calm = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const src = v && (/^(https?:)?\//.test(v) ? v : '../' + v);
+    return `<div class="auth-bg" aria-hidden="true">
+      ${src ? `<video class="auth-video" src="${esc(src)}" muted loop playsinline preload="metadata" ${calm ? '' : 'autoplay'}></video>` : ''}
+      <div class="ab-glow g1"></div><div class="ab-glow g2"></div><div class="ab-glow g3"></div>
+      <div class="ab-grid"></div>
+      <img class="ab-mark" src="../assets/mark.svg" alt="">
+      <span class="ab-route r1"></span><span class="ab-route r2"></span><span class="ab-route r3"></span><span class="ab-route r4"></span>
+      <div class="ab-grain"></div><div class="ab-vignette"></div>
+    </div>`;
+  }
   const AUTH = {
     setup: { title: 'Set up your admin', sub: 'Create the Owner account. This is a one-time step: the first account becomes the Owner, who then approves other staff.', fields: ['name', 'email', 'password'], btn: 'Create Owner account' },
     login: { title: 'Staff sign-in', sub: 'Sign in to manage clients, procurement and invoices.', fields: ['email', 'password'], btn: 'Sign in' },
@@ -718,6 +733,7 @@
   };
   function authScreen(mode, note = '', noteKind = '') {
     booted = false;
+    document.body.classList.remove('booting');
     document.body.classList.add('auth-mode');
     const A = AUTH[mode];
     const F = {
@@ -730,7 +746,7 @@
       signup: '<a href="#" data-auth="login">Already have an account? Sign in</a>',
       reset: '<a href="#" data-auth="login">Back to sign-in</a>',
     }[mode] || '';
-    main.innerHTML = `<div class="auth"><form class="auth-card" novalidate>
+    main.innerHTML = `<div class="auth">${authBg()}<form class="auth-card" novalidate>
       <img src="../assets/logo-black.svg" alt="Gorpat Trading Limited">
       <h1>${A.title}</h1>
       <p class="auth-sub">${A.sub}</p>
@@ -766,9 +782,10 @@
   }
   function waitingScreen(me) {
     booted = false;
+    document.body.classList.remove('booting');
     document.body.classList.add('auth-mode');
     const disabled = me.role === 'Disabled';
-    main.innerHTML = `<div class="auth"><div class="auth-card">
+    main.innerHTML = `<div class="auth">${authBg()}<div class="auth-card">
       <img src="../assets/logo-black.svg" alt="Gorpat Trading Limited">
       <h1>${disabled ? 'Account disabled' : 'Waiting for approval'}</h1>
       <p class="auth-sub">${disabled ? 'This account no longer has access. Contact the Owner if you think this is a mistake.' : `You're signed in as <b>${esc(me.email)}</b>. The Owner needs to give your account a role in Staff &amp; settings. Once they have, press Check again.`}</p>
@@ -785,7 +802,7 @@
   async function start() {
     const c = await GT.load();
     if (!['Owner', 'Procurement', 'Finance'].includes(c.user.role)) return waitingScreen(c.user);
-    document.body.classList.remove('auth-mode');
+    document.body.classList.remove('auth-mode', 'booting');
     booted = true;
     if (!location.hash || location.hash === '#') history.replaceState(null, '', '#/overview');
     route();
@@ -803,7 +820,8 @@
       if (await GT.auth.needsSetup()) return authScreen('setup');
       authScreen('login');
     } catch (e) {
-      main.innerHTML = `<div class="auth"><div class="auth-card"><h1>Can't reach the database</h1><p class="auth-sub">${esc(e.message)}. Check your internet connection and reload this page. If this is a new install, make sure <code>supabase/schema.sql</code> has been run in the Supabase SQL Editor.</p></div></div>`;
+      document.body.classList.remove('booting'); document.body.classList.add('auth-mode');
+      main.innerHTML = `<div class="auth">${authBg()}<div class="auth-card"><h1>Can't reach the database</h1><p class="auth-sub">${esc(e.message)}. Check your internet connection and reload this page. If this is a new install, make sure <code>supabase/schema.sql</code> has been run in the Supabase SQL Editor.</p></div></div>`;
     }
   })();
 })();

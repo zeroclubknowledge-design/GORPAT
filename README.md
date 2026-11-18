@@ -65,3 +65,11 @@ Then open http://localhost:5520 — it uses the same Supabase project as the liv
 
 - Replace the stock hero photo (Unsplash) with your own photography.
 - Supabase's built-in email sender is limited to a few emails per hour; for many staff sign-ups, add your own SMTP under Authentication → Emails.
+
+## Sign-in screen background
+
+The admin sign-in screen has an animated brand backdrop built in CSS (no download cost, respects "reduce motion"). To add a video (for example one made in Higgsfield) underneath it:
+
+1. Export a short seamless loop (8–12 s), MP4 (H.264), 1920×1080, ideally under 4 MB, no audio.
+2. Put it in the repo as `assets/video/signin.mp4`.
+3. In `assets/js/config.js` set `signinVideo: 'assets/video/signin.mp4'`, then push.
