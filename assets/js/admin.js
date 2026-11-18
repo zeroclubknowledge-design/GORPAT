@@ -123,6 +123,7 @@
     const newReq = db.all('quotations').filter((q) => q.status === 'Request').length;
     const newEnq = db.all('enquiries').filter((q) => q.status === 'New').length;
     const badge = { quotations: newReq, clients: newEnq };
+    const mb = $('#menuBtn'); if (mb) { const has = Object.keys(badge).some((k) => badge[k] && canSee(k)); mb.querySelector('.dot') ? (!has && mb.querySelector('.dot').remove()) : (has && mb.insertAdjacentHTML('beforeend', '<span class="dot"></span>')); }
     $('#sideNav').innerHTML = NAV.filter(([k]) => canSee(k)).map(([k, l]) => `<a href="#/${k}" class="${k === active ? 'active' : ''}" title="${l}">${ic(k)}<span>${l}</span>${badge[k] ? `<span class="badge">${badge[k]}</span>` : ''}</a>`).join('');
   }
   const PAGE_COL = { clients: 'clients', procurement: 'procurement', invoices: 'invoices', quotations: 'quotations', expenses: 'expenses', payments: 'payments', vendors: 'vendors' };
@@ -138,6 +139,20 @@
   }
   const FAB_COL = { 'new-invoices': 'invoices', 'new-quotations': 'quotations', 'add-clients': 'clients', 'add-vendors': 'vendors', 'add-procurement': 'procurement', 'add-expenses': 'expenses', 'add-payments': 'payments' };
   function fab(label, act) { if (FAB_COL[act] && !GT.can('write', FAB_COL[act])) return ''; return `<div class="fab"><button data-act="${act}">${ic('plus')}${esc(label)}</button></div>`; }
+
+  /* ---------------- mobile menu ---------------- */
+  const sideEl = $('#side'), menuBtn = $('#menuBtn');
+  function setMenu(open) {
+    sideEl.classList.toggle('open', open);
+    document.body.classList.toggle('menu-open', open);
+    menuBtn.setAttribute('aria-expanded', open);
+    menuBtn.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
+  }
+  menuBtn.addEventListener('click', () => setMenu(!sideEl.classList.contains('open')));
+  $('#sideNav').addEventListener('click', (e) => { if (e.target.closest('a')) setMenu(false); });
+  window.addEventListener('hashchange', () => setMenu(false));
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && sideEl.classList.contains('open')) { setMenu(false); menuBtn.focus(); } });
+  window.matchMedia('(min-width: 761px)').addEventListener('change', (m) => { if (m.matches) setMenu(false); });
 
   /* ---------------- router ---------------- */
   let ED = null; // editor working state
@@ -412,7 +427,7 @@
     main.innerHTML = `<div class="page">${head(title)}${extraTop}
       <div class="toolbar">${tabs}<label class="search">${ic('search')}<input placeholder="Search ${esc(title.toLowerCase())}" value="${esc(TBL[key] || '')}" data-tblq="${key}"></label></div>
       <div class="table-wrap"><table><thead><tr>${columns.map((c) => `<th class="${c.r ? 'r' : ''}">${c.label}</th>`).join('')}</tr></thead>
-      <tbody>${list.map((r) => `<tr data-edit="${col}:${r.id}">${columns.map((c) => `<td class="${c.r ? 'r tnum' : ''}">${c.html ? c.get(r) : esc(c.get(r))}</td>`).join('')}</tr>`).join('') || `<tr><td colspan="${columns.length}" style="text-align:center;color:var(--muted);padding:40px">Nothing here yet.</td></tr>`}</tbody></table></div>
+      <tbody>${list.map((r) => `<tr data-edit="${col}:${r.id}">${columns.map((c) => `<td class="${c.r ? 'r tnum' : ''}" data-label="${esc(c.label)}">${c.html ? c.get(r) : esc(c.get(r))}</td>`).join('')}</tr>`).join('') || `<tr><td colspan="${columns.length}" style="text-align:center;color:var(--muted);padding:40px">Nothing here yet.</td></tr>`}</tbody></table></div>
     </div>${addLabel ? fab(addLabel, 'add-' + col) : ''}`;
     const inp = $(`[data-tblq="${key}"]`); if (TBL[key]) { inp.focus(); inp.setSelectionRange(99, 99); }
   }
@@ -484,7 +499,7 @@
     const ex = db.all('expenses'), ym = today().slice(0, 7);
     const sum = (a) => a.reduce((s, e) => s + e.amount, 0);
     tablePage({ key: 'ex', title: 'Expenses', col: 'expenses', addLabel: 'ADD EXPENSE', rows: ex.slice().sort((a, b) => b.date.localeCompare(a.date)),
-      extraTop: `<div class="kpis" style="grid-template-columns:repeat(3,1fr)"><div class="kpi"><small>This month</small><b class="tnum">${moneyShort(sum(ex.filter((e) => e.date.startsWith(ym))))}</b></div><div class="kpi"><small>This year</small><b class="tnum">${moneyShort(sum(ex.filter((e) => e.date.startsWith(ym.slice(0, 4)))))}</b></div><div class="kpi"><small>Entries</small><b class="tnum">${ex.length}</b></div></div>`,
+      extraTop: `<div class="kpis three"><div class="kpi"><small>This month</small><b class="tnum">${moneyShort(sum(ex.filter((e) => e.date.startsWith(ym))))}</b></div><div class="kpi"><small>This year</small><b class="tnum">${moneyShort(sum(ex.filter((e) => e.date.startsWith(ym.slice(0, 4)))))}</b></div><div class="kpi"><small>Entries</small><b class="tnum">${ex.length}</b></div></div>`,
       columns: [{ label: 'Date', get: (r) => fmtD(r.date) }, { label: 'Description', get: (r) => r.desc }, { label: 'Category', get: (r) => r.category }, { label: 'Vendor', get: (r) => (vendor(r.vendorId) || {}).name || '—' }, { label: 'Amount', r: true, get: (r) => money(r.amount) }] });
   };
 
@@ -492,7 +507,7 @@
     const pays = db.all('payments').slice().sort((a, b) => b.date.localeCompare(a.date));
     const outstanding = db.all('invoices').filter((i) => i.status !== 'Draft').reduce((s, i) => s + invState(i).bal, 0);
     tablePage({ key: 'pa', title: 'Payments', col: 'payments', addLabel: 'RECORD PAYMENT', rows: pays,
-      extraTop: `<div class="kpis" style="grid-template-columns:repeat(3,1fr)"><div class="kpi accent"><small>Received (all time)</small><b class="tnum">${moneyShort(pays.reduce((s, p) => s + p.amount, 0))}</b></div><div class="kpi"><small>Outstanding</small><b class="tnum" style="color:var(--red)">${moneyShort(outstanding)}</b></div><div class="kpi"><small>Payments</small><b class="tnum">${pays.length}</b></div></div>`,
+      extraTop: `<div class="kpis three"><div class="kpi accent"><small>Received (all time)</small><b class="tnum">${moneyShort(pays.reduce((s, p) => s + p.amount, 0))}</b></div><div class="kpi"><small>Outstanding</small><b class="tnum" style="color:var(--red)">${moneyShort(outstanding)}</b></div><div class="kpi"><small>Payments</small><b class="tnum">${pays.length}</b></div></div>`,
       columns: [{ label: 'Date', get: (r) => fmtD(r.date) }, { label: 'Invoice', get: (r) => (db.get('invoices', r.invoiceId) || {}).number || '—' }, { label: 'Client', get: (r) => { const i = db.get('invoices', r.invoiceId); return i ? clientName(i) : '—'; } }, { label: 'Method', get: (r) => r.method }, { label: 'Reference', get: (r) => r.ref }, { label: 'Amount', r: true, get: (r) => money(r.amount) }] });
   };
 
