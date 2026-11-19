@@ -15,12 +15,13 @@
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html { scroll-behavior: smooth; }
-body { background: var(--bg); color: var(--text); font: 400 15px/1.5 "Inter Tight", system-ui, sans-serif; -webkit-font-smoothing: antialiased; padding: clamp(10px, 2vw, 28px); }
+body { background: var(--frame); color: var(--text); font: 400 15px/1.5 "Inter Tight", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
 a { color: inherit; text-decoration: none; }
 img { display: block; max-width: 100%; }
 svg { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 
-.frame { max-width: 1280px; margin: 0 auto; background: var(--frame); border: 1px solid #3a3a3a; border-radius: 22px; padding: var(--pad); overflow: hidden; }
+/* page wrapper: no outer box, just a comfortable max width and side gutters */
+.frame { max-width: 1360px; margin: 0 auto; padding: clamp(10px, 2vw, 32px); overflow: hidden; }
 
 /* ---------- HERO ---------- */
 .hero { position: relative; border-radius: 16px; overflow: hidden; min-height: clamp(560px, 62vw, 760px); padding: var(--pad); display: flex; flex-direction: column; background: #0f3d4a; isolation: isolate; }
