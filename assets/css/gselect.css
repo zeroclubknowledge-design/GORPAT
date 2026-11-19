@@ -1,0 +1,54 @@
+/* GORPAT dropdown — glassy orange brand card (see assets/js/gselect.js) */
+.gs-native { position: absolute !important; width: 1px !important; height: 1px !important; opacity: 0 !important; pointer-events: none !important; overflow: hidden; clip-path: inset(50%); }
+.gs-trigger { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; text-align: left; cursor: pointer; font: inherit; -webkit-tap-highlight-color: transparent; }
+.gs-trigger .gs-value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gs-trigger.gs-placeholder .gs-value { opacity: .6; }
+.gs-trigger:disabled { cursor: default; opacity: .6; }
+.gs-chev { width: 12px; height: 8px; flex: none; opacity: .75; transition: transform .22s cubic-bezier(.22, 1, .36, 1); }
+.gs-trigger[aria-expanded="true"] .gs-chev { transform: rotate(180deg); }
+
+.gs-scrim { position: fixed; inset: 0; z-index: 1000; background: transparent; }
+.gs-scrim.sheet { background: rgba(12, 6, 2, .5); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); opacity: 0; transition: opacity .2s ease; }
+.gs-scrim.sheet.in { opacity: 1; }
+
+.gs-pop {
+  position: fixed; z-index: 1001; display: flex; flex-direction: column; overflow: hidden;
+  border-radius: 18px; color: #fff; font-family: inherit;
+  background:
+    radial-gradient(120% 120% at 0% 0%, rgba(255, 176, 102, .5) 0%, rgba(255, 176, 102, 0) 52%),
+    radial-gradient(90% 90% at 100% 100%, rgba(110, 30, 0, .55) 0%, rgba(110, 30, 0, 0) 60%),
+    linear-gradient(155deg, rgba(240, 104, 18, .95) 0%, rgba(206, 76, 0, .94) 48%, rgba(158, 52, 0, .96) 100%);
+  border: 1px solid rgba(255, 255, 255, .26);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .45), inset 0 -1px 0 rgba(0, 0, 0, .18),
+    0 28px 60px -14px rgba(130, 40, 0, .6), 0 10px 24px rgba(0, 0, 0, .2);
+  -webkit-backdrop-filter: blur(18px) saturate(1.4); backdrop-filter: blur(18px) saturate(1.4);
+  opacity: 0; transform: translateY(-6px) scale(.98); transform-origin: top center;
+  transition: opacity .16s ease, transform .24s cubic-bezier(.22, 1, .36, 1);
+}
+.gs-pop.up { transform-origin: bottom center; transform: translateY(6px) scale(.98); }
+.gs-pop.in { opacity: 1; transform: none; }
+/* film-grain noise + glass sheen */
+.gs-pop::before { content: ""; position: absolute; inset: 0; pointer-events: none; border-radius: inherit; opacity: .32; mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .9 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+.gs-pop::after { content: ""; position: absolute; inset: 0; pointer-events: none; border-radius: inherit; background: linear-gradient(180deg, rgba(255, 255, 255, .16) 0%, rgba(255, 255, 255, 0) 38%); }
+
+.gs-list { position: relative; z-index: 1; list-style: none; margin: 0; padding: 6px; flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; outline: none; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, .4) transparent; }
+.gs-opt { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 46px; padding: 0 14px; border-radius: 12px; font-size: 15px; font-weight: 600; letter-spacing: .005em; cursor: pointer; text-shadow: 0 1px 1px rgba(90, 25, 0, .25); transition: background .12s ease, color .12s ease; }
+.gs-opt + .gs-opt { margin-top: 2px; }
+.gs-opt.active { background: rgba(255, 255, 255, .17); }
+.gs-opt[aria-selected="true"] { background: rgba(255, 255, 255, .96); color: #a83c00; font-weight: 700; text-shadow: none; box-shadow: 0 6px 16px -4px rgba(110, 35, 0, .45); }
+.gs-opt[aria-selected="true"].active { background: #fff; }
+.gs-opt.disabled { opacity: .45; cursor: default; }
+.gs-check { width: 20px; height: 20px; flex: none; opacity: 0; transform: scale(.6); transition: opacity .15s, transform .2s cubic-bezier(.22, 1, .36, 1); }
+.gs-opt[aria-selected="true"] .gs-check { opacity: 1; transform: none; }
+
+/* phones: bottom sheet */
+.gs-pop.sheet { left: 8px; right: 8px; bottom: calc(8px + env(safe-area-inset-bottom)); max-height: 72vh; max-height: 72dvh; border-radius: 26px; transform: translateY(28px); }
+.gs-pop.sheet.in { transform: none; }
+.gs-grab { position: relative; z-index: 1; flex: none; width: 42px; height: 5px; border-radius: 3px; background: rgba(255, 255, 255, .55); margin: 10px auto 0; }
+.gs-title { position: relative; z-index: 1; flex: none; padding: 12px 22px 6px; font-size: 12.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: rgba(255, 255, 255, .85); }
+.gs-pop.sheet .gs-list { padding: 4px 10px 12px; }
+.gs-pop.sheet .gs-opt { min-height: 54px; padding: 0 18px; font-size: 16.5px; border-radius: 14px; }
+html.gs-lock, html.gs-lock body { overflow: hidden; }
+
+@media (prefers-reduced-motion: reduce) { .gs-pop, .gs-scrim, .gs-chev, .gs-check { transition: none; } }
