@@ -1,6 +1,6 @@
 /* GORPAT dropdown — glassy black-to-orange animated card (see assets/js/gselect.js) */
 .gs-native { position: absolute !important; width: 1px !important; height: 1px !important; opacity: 0 !important; pointer-events: none !important; overflow: hidden; clip-path: inset(50%); }
-.gs-trigger { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; text-align: left; cursor: pointer; font: inherit; -webkit-tap-highlight-color: transparent; }
+.gs-trigger { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; text-align: left; cursor: pointer; font-family: inherit; -webkit-tap-highlight-color: transparent; }
 .gs-trigger .gs-value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gs-trigger.gs-placeholder .gs-value { opacity: .6; }
 .gs-trigger:disabled { cursor: default; opacity: .6; }
