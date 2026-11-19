@@ -2,10 +2,9 @@
  * orange card, on the website and in the admin. Every <select> is enhanced automatically,
  * including ones added later. The real <select> stays in the form (hidden), so form
  * submission, validation and FormData keep working unchanged.
- * Phones (≤600px): bottom sheet. Larger screens: dropdown under the field.
+ * Opens right under the field that was tapped (or above it when there's no room).
  * Keyboard: ↑/↓, Home/End, Enter/Space to choose, Esc/Tab to close, type to jump. */
 (function () {
-  const MOBILE = window.matchMedia('(max-width: 600px)');
   const CALM = window.matchMedia('(prefers-reduced-motion: reduce)');
   const CHEVRON = '<svg class="gs-chev" viewBox="0 0 12 8" aria-hidden="true"><path d="M1 1.5 6 6.5l5-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   const CHECK = '<svg class="gs-check" viewBox="0 0 20 20" aria-hidden="true"><path d="M5 10.5 8.5 14 15 6.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -58,16 +57,15 @@
     close(true);
     const trig = sel._gsTrig;
     const id = 'gs-list-' + (++uid);
-    const sheet = MOBILE.matches;
     const scrim = document.createElement('div');
-    scrim.className = 'gs-scrim' + (sheet ? ' sheet' : '');
+    scrim.className = 'gs-scrim';
     const pop = document.createElement('div');
-    pop.className = 'gs-pop' + (sheet ? ' sheet' : '');
+    pop.className = 'gs-pop';
     const title = labelFor(sel);
     const opts = Array.from(sel.options);
-    pop.innerHTML = `${sheet ? '<span class="gs-grab" aria-hidden="true"></span>' : ''}${sheet && title ? `<div class="gs-title">${escapeHtml(title)}</div>` : ''}
+    pop.innerHTML = `<span class="gs-glow a" aria-hidden="true"></span><span class="gs-glow b" aria-hidden="true"></span><span class="gs-shine" aria-hidden="true"></span>
       <ul class="gs-list" role="listbox" id="${id}" tabindex="-1"${title ? ` aria-label="${escapeHtml(title)}"` : ''}>
-        ${opts.map((o, i) => `<li role="option" id="${id}-${i}" class="gs-opt${o.disabled ? ' disabled' : ''}" data-i="${i}" aria-selected="${i === sel.selectedIndex}"${o.disabled ? ' aria-disabled="true"' : ''}><span>${escapeHtml(o.text)}</span>${CHECK}</li>`).join('')}
+        ${opts.map((o, i) => `<li role="option" id="${id}-${i}" class="gs-opt${o.disabled ? ' disabled' : ''}" style="--i:${Math.min(i, 10)}" data-i="${i}" aria-selected="${i === sel.selectedIndex}"${o.disabled ? ' aria-disabled="true"' : ''}><span>${escapeHtml(o.text)}</span>${CHECK}</li>`).join('')}
       </ul>`;
     document.body.append(scrim, pop);
     const list = pop.querySelector('.gs-list');
@@ -75,8 +73,9 @@
     open = { sel, trig, pop, scrim, list, items, idx: Math.max(0, sel.selectedIndex) };
     trig.setAttribute('aria-expanded', 'true');
     trig.setAttribute('aria-controls', id);
-    if (sheet) document.documentElement.classList.add('gs-lock'); else place();
-    requestAnimationFrame(() => { pop.classList.add('in'); scrim.classList.add('in'); });
+    place();
+    const follow = () => { if (open && open.pop === pop) { place(); requestAnimationFrame(follow); } };
+    requestAnimationFrame(() => { pop.classList.add('in'); scrim.classList.add('in'); follow(); });
     focusItem(open.idx, true);
     list.focus({ preventScroll: true });
 
@@ -87,16 +86,19 @@
   }
 
   function place() {
-    if (!open || open.pop.classList.contains('sheet')) return;
+    if (!open) return;
     const r = open.trig.getBoundingClientRect();
     const pop = open.pop;
     const w = Math.max(r.width, 220);
     pop.style.width = w + 'px';
     pop.style.left = Math.min(Math.max(8, r.left), window.innerWidth - w - 8) + 'px';
+    if (r.bottom < 0 || r.top > window.innerHeight) { close(true); return; }
     const below = window.innerHeight - r.bottom - 12, above = r.top - 12;
-    const max = Math.min(340, Math.max(below, above));
-    pop.style.maxHeight = max + 'px';
-    if (below >= Math.min(260, pop.scrollHeight) || below >= above) { pop.style.top = (r.bottom + 6) + 'px'; pop.style.bottom = ''; pop.classList.remove('up'); }
+    const want = Math.min(340, open.list.scrollHeight + 2);
+    // open below the field whenever the options (or a comfortable 200px) fit; otherwise flip up
+    const down = below >= Math.min(want, 200) || below >= above;
+    pop.style.maxHeight = Math.min(want, down ? below : above) + 'px';
+    if (down) { pop.style.top = (r.bottom + 6) + 'px'; pop.style.bottom = ''; pop.classList.remove('up'); }
     else { pop.style.top = ''; pop.style.bottom = (window.innerHeight - r.top + 6) + 'px'; pop.classList.add('up'); }
   }
 
@@ -153,7 +155,6 @@
     open = null;
     trig.setAttribute('aria-expanded', 'false');
     trig.removeAttribute('aria-controls');
-    document.documentElement.classList.remove('gs-lock');
     if (instant || CALM.matches) { pop.remove(); scrim.remove(); }
     else { pop.classList.remove('in'); scrim.classList.remove('in'); setTimeout(() => { pop.remove(); scrim.remove(); }, 180); }
     if (!instant && document.contains(trig)) trig.focus({ preventScroll: true });
@@ -161,8 +162,8 @@
 
   function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
-  window.addEventListener('resize', () => { if (open) { if (MOBILE.matches !== open.pop.classList.contains('sheet')) close(true); else place(); } });
-  window.addEventListener('scroll', (e) => { if (open && !open.pop.contains(e.target)) { if (open.pop.classList.contains('sheet')) return; if (document.contains(open.trig)) place(); else close(true); } }, true);
+  window.addEventListener('resize', () => { if (open) place(); });
+  window.addEventListener('scroll', (e) => { if (open && !open.pop.contains(e.target)) { if (document.contains(open.trig)) place(); else close(true); } }, true);
   window.addEventListener('hashchange', () => close(true));
 
   function scan(root) { (root.querySelectorAll ? root : document).querySelectorAll('select').forEach(enhance); if (root.tagName === 'SELECT') enhance(root); }
