@@ -483,7 +483,7 @@ body.auth-mode .auth-card { margin: auto; }
 @media (max-width: 1100px) { .side-nav .nav-group { padding-left: 16px; } }
 @media (max-width: 760px) { .side-nav .nav-group { padding: 16px 16px 6px; } .side-nav a { min-height: 50px; } }
 
-.page-sub { color: var(--ink-2); font-size: 14px; margin: -8px 0 16px; max-width: 80ch; }
+.page-sub { color: var(--ink-2); font-size: 14px; margin: -8px 0 16px; }
 .muted { color: var(--muted); }
 tbody tr.static { cursor: default; }
 tbody tr.static:hover { background: transparent; }

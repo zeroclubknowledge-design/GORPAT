@@ -659,7 +659,7 @@
       <div class="panel"><h3>Company</h3>
         <div style="font-size:14px;line-height:1.6"><b>${esc(COMPANY.name)}</b><br>${COMPANY.headOffice.map(esc).join(', ')}<br>USA: ${COMPANY.usOffice.join(', ')} · ${COMPANY.usPhone}<br>${COMPANY.phones.join(' · ')}<br>${COMPANY.email}</div>
         <h3 style="margin-top:22px">Data</h3>
-        <p class="page-sub" style="margin:0 0 4px">Load sample records to explore, or clear every business record. Admin accounts and settings are kept either way.</p>
+        <p class="page-sub" style="margin:0 0 4px">Load sample records, or clear all business records.</p>
         <div class="modal-foot" style="margin-top:12px"><button class="ghost danger left" data-act="clear-data">Delete all records</button><button class="ghost" data-act="load-demo">Load demo data</button></div></div>
     </div>`;
   }
@@ -672,7 +672,7 @@
   function adminsHTML() {
     return `<div class="panel"><h3>Admins <a href="#" data-act="add-staff">How to add admins</a></h3>
       <div id="staffList"><p style="color:var(--muted);font-size:14px">Loading…</p></div>
-      <p style="font-size:12.5px;color:var(--muted);margin-top:12px">Only you approve new admins and decide which sections each one can view or edit. The database enforces these limits, not just the menu. To add someone, send them the admin link and ask them to choose <b>Request admin access</b>. Once they confirm their email they appear here with a <b>Review</b> button.</p></div>`;
+      <p style="font-size:12.5px;color:var(--muted);margin-top:12px">Only you approve admins and set their access. To add someone, send them the admin link and ask them to choose <b>Request admin access</b>.</p></div>`;
   }
   function myAccessHTML(u) {
     const a = u.access || {};
@@ -1070,7 +1070,7 @@
         ${line('Total operating expenses', f.opTotal, 'sub')}
         ${line(`Net profit${f.revenue ? ` <span class="muted">(${((f.net / f.revenue) * 100).toFixed(1)}%)</span>` : ''}`, f.net, 'grand')}
       </tbody></table>
-      <p class="page-sub" style="margin:14px 0 0">Figures exclude VAT. Cost of sales counts procurement orders that are Ordered, In transit or Delivered, plus expenses in the Purchases category.</p></div></div>`;
+      <p class="page-sub" style="margin:14px 0 0">Excludes VAT. Cost of sales = procurement orders (ordered, in transit or delivered) plus Purchases expenses.</p></div></div>`;
   };
 
   PAGES.cashflow = function () {
