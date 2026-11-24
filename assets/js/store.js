@@ -24,10 +24,15 @@
     defaultNotes: 'Thank you for choosing Gorpat Trading Limited.',
   };
   // Mirror of can_read / can_write in supabase/schema.sql — used only to shape the UI.
-  const COLS = ['clients', 'vendors', 'invoices', 'quotations', 'procurement', 'payments', 'expenses', 'enquiries'];
+  const COLS = ['clients', 'vendors', 'invoices', 'quotations', 'procurement', 'payments', 'expenses', 'enquiries',
+    'deals', 'returns', 'credit_notes', 'warehouses', 'stock', 'transfers', 'deliveries', 'drivers', 'cost_ledger', 'employees', 'attendance', 'payroll'];
   // Mirror of can_read / can_write in supabase/002_head_admin_access.sql — shapes the UI only;
   // the database enforces the real rules.
-  const SECTIONS = ['clients', 'enquiries', 'procurement', 'quotations', 'invoices', 'payments', 'expenses', 'vendors', 'reports'];
+  // access sections, in the order the head admin sees them (mirror of supabase/003_operations_modules.sql)
+  const SECTIONS = ['clients', 'enquiries', 'deals', 'quotations', 'invoices', 'returns', 'payments',
+    'procurement', 'vendors', 'warehouses', 'stock', 'transfers', 'deliveries', 'drivers',
+    'expenses', 'cost_ledger', 'reports', 'employees', 'attendance', 'payroll'];
+  const secOf = (c) => (c === 'credit_notes' ? 'returns' : c);
   function permsFor(me) {
     if (!me) return NONE;
     if (me.role === 'Owner') return { read: COLS, write: COLS, reports: true, settings: true, head: true };
@@ -35,12 +40,17 @@
     if (me.role !== 'Staff') return NONE;
     const a = me.access || {};
     const lvl = (k) => ({ edit: 2, view: 1 }[a[k]] || 0);
-    const read = COLS.filter((c) => lvl(c) >= 1
-      || (c === 'clients' && Math.max(lvl('invoices'), lvl('quotations'), lvl('procurement'), lvl('payments')) >= 1)
-      || (c === 'vendors' && Math.max(lvl('procurement'), lvl('expenses')) >= 1)
-      || (c === 'invoices' && Math.max(lvl('payments'), lvl('reports')) >= 1)
-      || ((c === 'payments' || c === 'expenses') && lvl('reports') >= 1));
-    return { read, write: COLS.filter((c) => lvl(c) === 2), reports: lvl('reports') >= 1, settings: false, head: false };
+    const any = (...ks) => Math.max(...ks.map(lvl)) >= 1;
+    const read = COLS.filter((c) => lvl(secOf(c)) >= 1
+      || (c === 'clients' && any('invoices', 'quotations', 'procurement', 'payments', 'returns', 'deliveries', 'deals'))
+      || (c === 'vendors' && any('procurement', 'expenses', 'stock', 'cost_ledger'))
+      || ((c === 'invoices' || c === 'credit_notes') && any('invoices', 'payments', 'reports', 'returns', 'deliveries'))
+      || (['payments', 'expenses', 'procurement', 'payroll'].includes(c) && any('reports'))
+      || (c === 'warehouses' && any('stock', 'transfers'))
+      || (c === 'stock' && any('warehouses'))
+      || (c === 'drivers' && any('deliveries'))
+      || (c === 'employees' && any('attendance', 'payroll')));
+    return { read, write: COLS.filter((c) => lvl(secOf(c)) === 2), reports: lvl('reports') >= 1, settings: false, head: false };
   }
   const ROLES = {
     Owner: { read: COLS, write: COLS, reports: true, settings: true },

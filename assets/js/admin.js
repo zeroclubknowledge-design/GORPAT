@@ -49,18 +49,19 @@
     return GT.iso(d);
   }
   const paidFor = (inv) => db.all('payments').filter((p) => p.invoiceId === inv.id).reduce((s, p) => s + Number(p.amount || 0), 0);
+  const creditFor = (inv) => db.all('credit_notes').filter((c) => c.invoiceId === inv.id && c.status === 'Applied').reduce((s, c) => s + Number(c.amount || 0), 0);
   function invState(inv) {
-    const t = totals(inv).total, paid = paidFor(inv), bal = Math.max(0, t - paid);
+    const t = totals(inv).total, paid = paidFor(inv), credited = creditFor(inv), bal = Math.max(0, t - paid - credited);
     let st;
     if (inv.status === 'Draft') st = 'Draft';
     else if (t > 0 && bal <= 0.005) st = 'Paid';
     else if (dueDate(inv) < today()) st = 'Overdue';
-    else if (paid > 0) st = 'Partial';
+    else if (paid + credited > 0) st = 'Partial';
     else st = 'Sent';
     let label = st;
     if (st === 'Sent') label = dueDate(inv) === today() ? 'Due Today' : 'Due ' + fmtLong(dueDate(inv));
     if (st === 'Partial') label = 'Part paid';
-    return { total: t, paid, bal, st, label };
+    return { total: t, paid, credited, bal, st, label };
   }
   const chip = (st, label) => `<span class="st st-${esc(String(st).replace(/\s+/g, '-'))}">${esc(label || st)}</span>`;
 
@@ -116,21 +117,31 @@
 
   /* ---------------- shell ---------------- */
   const NAV = [
-    ['overview', 'Business overview'], ['clients', 'Clients'], ['procurement', 'Procurement'], ['invoices', 'Invoices'],
-    ['quotations', 'Quotations'], ['expenses', 'Expenses'], ['payments', 'Payments'], ['vendors', 'Vendors'],
-    ['reports', 'Reports'], ['settings', 'Admins & settings'],
+    ['', [['overview', 'Business overview']]],
+    ['Sales & CRM', [['clients', 'Clients'], ['pipeline', 'Pipeline'], ['quotations', 'Quotations'], ['invoices', 'Invoices'], ['returns', 'Returns & credit notes'], ['payments', 'Payments']]],
+    ['Procurement & logistics', [['procurement', 'Procurement'], ['vendors', 'Vendors'], ['warehouses', 'Warehouses'], ['stock', 'Stock & batches'], ['transfers', 'Transfers'], ['deliveries', 'Deliveries'], ['drivers', 'Drivers & routes']]],
+    ['Financials', [['expenses', 'Expenses'], ['pnl', 'P&L statement'], ['cashflow', 'Cash flow'], ['vat', 'VAT summary'], ['costledger', 'Cost ledger'], ['reports', 'Reports']]],
+    ['HR & payroll', [['employees', 'Staff'], ['attendance', 'Attendance'], ['payroll', 'Payroll']]],
+    ['Admin', [['settings', 'Admins & settings']]],
   ];
   function renderNav(active) {
     const newReq = db.all('quotations').filter((q) => q.status === 'Request').length;
     const newEnq = db.all('enquiries').filter((q) => q.status === 'New').length;
-    const badge = { quotations: newReq, clients: newEnq, settings: GT.pendingAdmins };
+    const expiring = db.all('stock').filter((b) => b.expiry && b.expiry <= GT.iso(new Date(Date.now() + 14 * 864e5))).length;
+    const badge = { quotations: newReq, clients: newEnq, settings: GT.pendingAdmins, stock: expiring };
     const mb = $('#menuBtn'); if (mb) { const has = Object.keys(badge).some((k) => badge[k] && canSee(k)); mb.querySelector('.dot') ? (!has && mb.querySelector('.dot').remove()) : (has && mb.insertAdjacentHTML('beforeend', '<span class="dot"></span>')); }
-    $('#sideNav').innerHTML = NAV.filter(([k]) => canSee(k)).map(([k, l]) => `<a href="#/${k}" class="${k === active ? 'active' : ''}" title="${l}">${ic(k)}<span>${l}</span>${badge[k] ? `<span class="badge">${badge[k]}</span>` : ''}</a>`).join('');
+    $('#sideNav').innerHTML = NAV.map(([g, items]) => {
+      const vis = items.filter(([k]) => canSee(k));
+      if (!vis.length) return '';
+      return (g ? `<div class="nav-group">${esc(g)}</div>` : '') + vis.map(([k, l]) => `<a href="#/${k}" class="${k === active ? 'active' : ''}" title="${esc(l)}">${ic(k)}<span>${esc(l)}</span>${badge[k] ? `<span class="badge">${badge[k]}</span>` : ''}</a>`).join('');
+    }).join('');
   }
-  const PAGE_COL = { clients: 'clients', procurement: 'procurement', invoices: 'invoices', quotations: 'quotations', expenses: 'expenses', payments: 'payments', vendors: 'vendors' };
+  const PAGE_COL = { clients: 'clients', procurement: 'procurement', invoices: 'invoices', quotations: 'quotations', expenses: 'expenses', payments: 'payments', vendors: 'vendors',
+    pipeline: 'deals', returns: 'returns', warehouses: 'warehouses', stock: 'stock', transfers: 'transfers', deliveries: 'deliveries', drivers: 'drivers',
+    costledger: 'cost_ledger', employees: 'employees', attendance: 'attendance', payroll: 'payroll' };
   function canSee(page) {
     if (page === 'overview') return true;
-    if (page === 'reports') return GT.can('reports');
+    if (page === 'reports' || page === 'pnl' || page === 'cashflow' || page === 'vat') return GT.can('reports');
     if (page === 'settings') return GT.can('settings');
     if (page === 'clients') return GT.can('read', 'clients') || GT.can('read', 'enquiries');
     return GT.can('read', PAGE_COL[page]);
@@ -139,12 +150,13 @@
   // (phones get the full-width bottom bar from fab() instead)
   function head(title, create) {
     const u = GT.user || {};
-    const newBtn = create && !(FAB_COL[create.act] && !GT.can('write', FAB_COL[create.act]))
+    const newBtn = create && !(colOfAct(create.act) && !GT.can('write', colOfAct(create.act)))
       ? `<button class="pill-btn solid head-new" data-act="${create.act}">${ic('plus')}${esc(create.label.charAt(0) + create.label.slice(1).toLowerCase())}</button>` : '';
     return `<div class="page-head"><h1>${esc(title)}</h1><div class="head-tools">${newBtn}<button class="round" data-act="search" aria-label="Search">${ic('search')}</button><button class="staff-pill" data-act="me" title="${esc(u.name)} — ${esc(GT.roleLabel(u.role))}">${ic('star', 'i" style="width:15px;height:15px')}${esc(GT.roleLabel(u.role).toUpperCase())}</button></div></div>`;
   }
-  const FAB_COL = { 'new-invoices': 'invoices', 'new-quotations': 'quotations', 'add-clients': 'clients', 'add-vendors': 'vendors', 'add-procurement': 'procurement', 'add-expenses': 'expenses', 'add-payments': 'payments' };
-  function fab(label, act) { if (FAB_COL[act] && !GT.can('write', FAB_COL[act])) return ''; return `<div class="fab"><button data-act="${act}">${ic('plus')}${esc(label)}</button></div>`; }
+  const FAB_COL = { 'new-invoices': 'invoices', 'new-quotations': 'quotations', 'add-clients': 'clients', 'add-vendors': 'vendors', 'add-procurement': 'procurement', 'add-expenses': 'expenses', 'add-payments': 'payments', 'run-payroll': 'payroll' };
+  const colOfAct = (act) => FAB_COL[act] || (/^add-/.test(act) && act !== 'add-staff' ? act.slice(4) : null);
+  function fab(label, act) { if (colOfAct(act) && !GT.can('write', colOfAct(act))) return ''; return `<div class="fab"><button data-act="${act}">${ic('plus')}${esc(label)}</button></div>`; }
 
   /* ---------------- mobile menu ---------------- */
   const sideEl = $('#side'), menuBtn = $('#menuBtn');
@@ -287,7 +299,7 @@
         <div class="sum-line"><button class="add" data-act="tax">${ic('plusC')}${doc.taxOn ? 'VAT' : 'Add VAT'} (${Number(doc.taxRate)}%)</button><span class="val tnum">${money(t.tax)}</span></div>
         <div class="divider"></div>
         <div class="sum-line strong"><span>Total</span><span class="tnum">${money(t.total)}</span></div>
-        ${st ? `<div class="sum-line"><span>Paid</span><span class="val tnum">${money(st.paid)}</span></div><div class="sum-line strong"><span>Balance due</span><span class="tnum" style="color:${st.bal > 0 ? 'var(--red)' : 'var(--green)'}">${money(st.bal)}</span></div>` : ''}
+        ${st ? `<div class="sum-line"><span>Paid</span><span class="val tnum">${money(st.paid)}</span></div>${st.credited ? `<div class="sum-line"><span>Credit notes applied</span><span class="val tnum">−${money(st.credited)}</span></div>` : ''}<div class="sum-line strong"><span>Balance due</span><span class="tnum" style="color:${st.bal > 0 ? 'var(--red)' : 'var(--green)'}">${money(st.bal)}</span></div>` : ''}
       </div>
       <div class="card"><div class="card-lbl" style="color:var(--ink)">Notes</div><textarea class="notes" data-notes placeholder="Comments will appear at the bottom of your ${isInv ? 'invoice' : 'quotation'}">${esc(doc.notes)}</textarea></div>
       ${pays.length ? `<div class="card"><div class="card-lbl">Payments</div><div class="pay-list">${pays.map((p) => `<div><span>${fmtD(p.date)} · ${esc(p.method)} ${p.ref ? '· ' + esc(p.ref) : ''}</span><b class="tnum">${money(p.amount)}</b></div>`).join('')}</div></div>` : ''}
@@ -456,10 +468,26 @@
     if (col === 'clients') return clientForm(id ? db.get('clients', id) : {});
     if (col === 'payments') return paymentForm(id ? db.get('payments', id) : {});
     if (col === 'enquiries') return enquiryModal(id);
-    const rec = id ? db.get(col, id) : { date: today(), status: 'Sourcing', ref: col === 'procurement' ? 'PO-' + (1000 + db.all('procurement').length + 1) : '' };
-    formModal((id ? 'Edit ' : 'New ') + ({ vendors: 'vendor', procurement: 'procurement order', expenses: 'expense' }[col]), FIELDS[col], rec, (d) => {
+    if (!FIELDS[col]) return;
+    const rec = id ? db.get(col, id) : (DEF[col] ? DEF[col]() : { date: today(), status: 'Sourcing', ref: col === 'procurement' ? 'PO-' + (1000 + db.all('procurement').length + 1) : '' });
+    if (id && !rec) return;
+    if (!GT.can('write', col)) return viewRecord(col, rec);
+    formModal((id ? 'Edit ' : 'New ') + (TITLES[col] || { vendors: 'vendor', procurement: 'procurement order', expenses: 'expense' }[col]), FIELDS[col], rec, (d) => {
+      if (HOOK[col]) HOOK[col](d, id ? db.get(col, id) : null);
       if (id) db.update(col, id, d); else db.insert(col, d); toast('Saved'); route();
     }, id ? { onDelete: () => { db.remove(col, id); route(); } } : {});
+  }
+
+  // read-only view for admins who can see but not edit a section
+  function viewRecord(col, rec) {
+    const rows = FIELDS[col].map((f) => {
+      let v = rec[f.name];
+      if (f.type === 'select') { const o = (typeof f.options === 'function' ? f.options() : f.options).find((x) => String(Array.isArray(x) ? x[0] : x) === String(v ?? '')); v = o ? (Array.isArray(o) ? o[1] : o) : v; }
+      else if (f.type === 'date' && v) v = fmtLong(v);
+      else if (f.type === 'number' && /cost|value|amount|salary|vat/i.test(f.name)) v = money(v);
+      return `<dt>${esc(f.label)}</dt><dd>${esc(v === undefined || v === '' ? '—' : v)}</dd>`;
+    }).join('');
+    modal('Details', `<dl class="view-list">${rows}</dl><div class="modal-foot"><button class="pill-btn solid" data-close>Close</button></div>`);
   }
 
   let clientTab = 'clients';
@@ -564,6 +592,7 @@
           ${field({ name: 'bankName', label: 'Bank name' }, s.bank.name)}
           <div class="fld-row">${field({ name: 'bankAccount', label: 'Account name' }, s.bank.account)}${field({ name: 'bankNumber', label: 'Account number' }, s.bank.number)}</div>
           ${field({ name: 'defaultNotes', label: 'Default invoice notes', type: 'textarea', rows: 2 }, s.defaultNotes)}
+          <div class="fld-row">${field({ name: 'openingCash', label: 'Starting cash balance (Cash flow)', type: 'number', step: 'any' }, s.openingCash || 0)}${field({ name: 'payrollDeductionPct', label: 'Payroll deductions % (PAYE + pension)', type: 'number', step: 'any' }, s.payrollDeductionPct ?? 10)}</div>
           <div class="modal-foot"><button class="pill-btn solid" type="submit">Save settings</button></div>
         </form>
         <div>
@@ -577,18 +606,22 @@
       </div></div>`;
     $('#setForm').addEventListener('submit', (e) => {
       e.preventDefault(); const d = Object.fromEntries(new FormData(e.target));
-      db.saveSettings({ currency: d.currency, taxRate: Number(d.taxRate) || 0, invoicePrefix: d.invoicePrefix, quotePrefix: d.quotePrefix, defaultNotes: d.defaultNotes, bank: { name: d.bankName, account: d.bankAccount, number: d.bankNumber } }).then(() => toast('Settings saved'));
+      db.saveSettings({ currency: d.currency, taxRate: Number(d.taxRate) || 0, invoicePrefix: d.invoicePrefix, quotePrefix: d.quotePrefix, defaultNotes: d.defaultNotes, openingCash: Number(d.openingCash) || 0, payrollDeductionPct: Number(d.payrollDeductionPct) || 0, bank: { name: d.bankName, account: d.bankAccount, number: d.bankNumber } }).then(() => toast('Settings saved'));
     });
     loadStaff();
   };
   let STAFF = [];
-  const SECTION_LABELS = { clients: 'Clients', enquiries: 'Website enquiries', procurement: 'Procurement', quotations: 'Quotations', invoices: 'Invoices', payments: 'Payments', expenses: 'Expenses', vendors: 'Vendors', reports: 'Reports' };
-  const ALL_EDIT = { clients: 'edit', enquiries: 'edit', procurement: 'edit', quotations: 'edit', invoices: 'edit', payments: 'edit', expenses: 'edit', vendors: 'edit', reports: 'view' };
+  const SECTION_LABELS = { clients: 'Clients', enquiries: 'Website enquiries', deals: 'Pipeline', quotations: 'Quotations', invoices: 'Invoices', returns: 'Returns & credit notes', payments: 'Payments',
+    procurement: 'Procurement', vendors: 'Vendors', warehouses: 'Warehouses', stock: 'Stock & batches', transfers: 'Transfers', deliveries: 'Deliveries', drivers: 'Drivers & routes',
+    expenses: 'Expenses', cost_ledger: 'Cost ledger', reports: 'Reports, P&L, cash flow & VAT', employees: 'Staff (HR)', attendance: 'Attendance', payroll: 'Payroll' };
+  const ALL_EDIT = Object.fromEntries(GT.SECTIONS.map((k) => [k, k === 'reports' ? 'view' : 'edit']));
   const PRESETS = [
     ['Full access', ALL_EDIT],
-    ['Procurement', { clients: 'edit', enquiries: 'edit', procurement: 'edit', vendors: 'edit', quotations: 'edit', invoices: 'view' }],
-    ['Finance', { clients: 'edit', enquiries: 'view', procurement: 'view', vendors: 'view', quotations: 'edit', invoices: 'edit', payments: 'edit', expenses: 'edit', reports: 'view' }],
-    ['View only', { clients: 'view', enquiries: 'view', procurement: 'view', quotations: 'view', invoices: 'view', payments: 'view', expenses: 'view', vendors: 'view', reports: 'view' }],
+    ['Sales', { clients: 'edit', enquiries: 'edit', deals: 'edit', quotations: 'edit', invoices: 'view', returns: 'edit', deliveries: 'view' }],
+    ['Procurement & logistics', { clients: 'view', quotations: 'view', invoices: 'view', procurement: 'edit', vendors: 'edit', warehouses: 'edit', stock: 'edit', transfers: 'edit', deliveries: 'edit', drivers: 'edit', cost_ledger: 'edit' }],
+    ['Finance', { clients: 'edit', quotations: 'edit', invoices: 'edit', returns: 'edit', payments: 'edit', procurement: 'view', vendors: 'view', expenses: 'edit', cost_ledger: 'view', reports: 'view', payroll: 'view' }],
+    ['HR', { employees: 'edit', attendance: 'edit', payroll: 'edit' }],
+    ['View only', Object.fromEntries(GT.SECTIONS.map((k) => [k, 'view']))],
     ['No access', {}],
   ];
   function accessSummary(m) {
@@ -692,8 +725,445 @@
     res.addEventListener('click', (e) => { const a = e.target.closest('a'); if (!a) return; closeModal(); if (a.dataset.cl) { e.preventDefault(); location.hash = '#/clients'; setTimeout(() => clientForm(db.get('clients', a.dataset.cl)), 50); } });
   }
 
+  /* ================= OPERATIONS MODULES =================
+   * Pipeline, Returns & credit notes, Warehouses, Stock & batches, Transfers, Deliveries,
+   * Drivers & routes, Cost ledger, P&L, Cash flow, VAT summary, Staff, Attendance, Payroll. */
+  Object.assign(P, {
+    pipeline: '<path d="M3 4h18l-7 8.5V19l-4 2v-8.5z" fill="currentColor"/>',
+    returns: '<path d="M9 4 4 9l5 5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H10" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>',
+    warehouses: '<path d="M2 9.5 12 3l10 6.5V21H2z" fill="currentColor"/><rect x="7" y="13" width="10" height="8" fill="#fbfbfd"/><path d="M7 16.2h10M7 18.8h10" stroke="currentColor" stroke-width="1.3"/>',
+    stock: '<rect x="3" y="12.5" width="8" height="8" rx="1.2" fill="currentColor"/><rect x="13" y="12.5" width="8" height="8" rx="1.2" fill="currentColor"/><rect x="8" y="3" width="8" height="8" rx="1.2" fill="currentColor"/>',
+    transfers: '<path d="M4 8h15l-4-4M20 16H5l4 4" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/>',
+    deliveries: '<path d="M2 5h12v11H2zM14 8.5h4.5l3.5 4V16h-8z" fill="currentColor"/><circle cx="6.5" cy="17.5" r="2.3" fill="currentColor" stroke="#fbfbfd" stroke-width="1.4"/><circle cx="17.5" cy="17.5" r="2.3" fill="currentColor" stroke="#fbfbfd" stroke-width="1.4"/><path d="M5 10.5l2 2 4-4" fill="none" stroke="#fbfbfd" stroke-width="1.7" stroke-linecap="round"/>',
+    drivers: '<circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2.4"/><circle cx="12" cy="12" r="2.4" fill="currentColor"/><path d="M3.8 10.6 9.6 12M14.4 12l5.8-1.4M12 14.4v6" stroke="currentColor" stroke-width="2.2"/>',
+    pnl: '<path d="M5 20v-8M11 20V5M17 20v-6M2 20.5h20" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/>',
+    cashflow: '<path d="M3 17l5.5-5.5 4 4L20 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M14.5 8H20v5.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>',
+    vat: '<rect x="3" y="3" width="18" height="18" rx="3.5" fill="currentColor"/><path d="M8 16 16 8" stroke="#fbfbfd" stroke-width="2" stroke-linecap="round"/><circle cx="8.6" cy="8.6" r="1.7" fill="#fbfbfd"/><circle cx="15.4" cy="15.4" r="1.7" fill="#fbfbfd"/>',
+    costledger: '<path d="M6 2.5h11.5A1.5 1.5 0 0 1 19 4v17.5H7.5A2.5 2.5 0 0 1 5 19V3.5a1 1 0 0 1 1-1z" fill="currentColor"/><path d="M9 7.5h6.5M9 11.5h6.5M9 15.5h4" stroke="#fbfbfd" stroke-width="1.8"/>',
+    employees: '<rect x="4" y="2.5" width="16" height="19" rx="2.5" fill="currentColor"/><circle cx="12" cy="10" r="3" fill="#fbfbfd"/><path d="M7.5 17.5c.9-2.1 2.5-3.1 4.5-3.1s3.6 1 4.5 3.1" fill="none" stroke="#fbfbfd" stroke-width="1.8" stroke-linecap="round"/>',
+    attendance: '<rect x="3.5" y="5" width="17" height="15.5" rx="2.2" fill="currentColor"/><path d="M3.5 10h17" stroke="#fbfbfd" stroke-width="2"/><path d="M8 2.8v4M16 2.8v4" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M8.6 14.8l2.2 2.2 4.4-4.4" fill="none" stroke="#fbfbfd" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>',
+    payroll: '<rect x="2" y="6" width="20" height="12.5" rx="2.2" fill="currentColor"/><circle cx="12" cy="12.25" r="3.1" fill="#fbfbfd"/><circle cx="5.6" cy="12.25" r="1.1" fill="#fbfbfd"/><circle cx="18.4" cy="12.25" r="1.1" fill="#fbfbfd"/>',
+  });
+
+  // small helpers
+  const pick = (col, label, empty = '—') => () => [['', empty]].concat(db.all(col).map((r) => [r.id, label(r)]));
+  const nm = (col, id, key = 'name') => { const r = id && db.get(col, id); return r ? (typeof key === 'function' ? key(r) : r[key]) || '—' : '—'; };
+  const clientLabel = (c) => c.company || c.name;
+  const invLabel = (i) => `${i.number} — ${clientName(i)}`;
+  const sum = (arr, f) => arr.reduce((s, x) => s + (Number(f(x)) || 0), 0);
+  const daysBetween = (a, b) => Math.round((pd(b) - pd(a)) / 864e5);
+  const inRange = (date, [a, b]) => !!date && date >= a && date <= b;
+  const monthRange = (offset = 0) => { const d = new Date(); const s = new Date(d.getFullYear(), d.getMonth() + offset, 1); return [GT.iso(s), GT.iso(new Date(s.getFullYear(), s.getMonth() + 1, 0))]; };
+  const monthName = (ym) => { const [y, m] = ym.split('-').map(Number); return `${MONTHS[m - 1]} ${y}`; };
+  const subhead = (t) => `<p class="page-sub">${t}</p>`;
+  const num = (n) => (Number(n) || 0).toLocaleString('en-NG');
+  function nextRef(col, prefix, pad = 3) {
+    const n = db.all(col).map((r) => parseInt(String(r.ref || '').replace(/\D/g, ''), 10) || 0);
+    return prefix + String((n.length ? Math.max(...n) : 0) + 1).padStart(pad, '0');
+  }
+  const kpiRow = (items) => `<div class="kpis${items.length === 3 ? ' three' : ''}">${items.map(([l, v, s, accent]) => `<div class="kpi${accent ? ' accent' : ''}"><small>${l}</small><b class="tnum">${v}</b>${s ? `<span>${s}</span>` : ''}</div>`).join('')}</div>`;
+  const TONE = { Pending: 'Pending', Approved: 'Ordered', Credited: 'Paid', Rejected: 'Declined', Draft: 'Draft', Applied: 'Paid', Void: 'Declined',
+    Planned: 'Draft', 'In transit': 'In transit', Completed: 'Paid', Cancelled: 'Declined', Scheduled: 'Draft', 'Out for delivery': 'In transit', Delivered: 'Paid', Failed: 'Overdue',
+    Available: 'Paid', 'On route': 'In transit', 'Off duty': 'Draft', Active: 'Paid', 'On leave': 'Pending', Exited: 'Declined',
+    Present: 'Paid', Late: 'Pending', Absent: 'Overdue', Processing: 'Pending', Paid: 'Paid',
+    Healthy: 'Paid', Watch: 'Pending', 'Expiring soon': 'Request', Expired: 'Overdue', 'No expiry': 'Draft',
+    Revalued: 'Ordered', 'New supplier': 'In transit', 'New batch': 'Draft', Discount: 'Paid',
+    'New lead': 'Draft', Contacted: 'Ordered', Quoted: 'Pending', Negotiation: 'Request', Won: 'Paid', Lost: 'Declined' };
+  const sc = (st) => chip(TONE[st] || 'Draft', st || '—');
+  const STAGES = ['New lead', 'Contacted', 'Quoted', 'Negotiation', 'Won', 'Lost'];
+
+  /* ---------- forms ---------- */
+  Object.assign(FIELDS, {
+    deals: [{ name: 'company', label: 'Company / prospect', required: true },
+      { name: 'contact', label: 'Contact person', half: true }, { name: 'phone', label: 'Phone', type: 'tel', half: true },
+      { name: 'value', label: 'Estimated value', type: 'number', min: 0, step: 'any', half: true }, { name: 'stage', label: 'Stage', type: 'select', options: STAGES, half: true },
+      { name: 'source', label: 'Source', type: 'select', options: ['Website', 'Referral', 'Walk-in', 'Tender', 'Existing client', 'Other'], half: true },
+      { name: 'clientId', label: 'Linked client', type: 'select', options: pick('clients', clientLabel, 'Not a client yet'), half: true },
+      { name: 'email', label: 'Email', type: 'email' }, { name: 'notes', label: 'Notes', type: 'textarea', rows: 2 }],
+    returns: [{ name: 'ref', label: 'Return no.', required: true, half: true }, { name: 'date', label: 'Date', type: 'date', half: true },
+      { name: 'clientId', label: 'Client', type: 'select', options: pick('clients', clientLabel), half: true },
+      { name: 'invoiceId', label: 'Invoice', type: 'select', options: pick('invoices', invLabel), half: true },
+      { name: 'item', label: 'Item returned', required: true },
+      { name: 'qty', label: 'Quantity', type: 'number', min: 0, step: 'any', half: true },
+      { name: 'reason', label: 'Reason', type: 'select', options: ['Damaged in transit', 'Wrong item delivered', 'Near-expiry', 'Faulty', 'Excess quantity', 'Other'], half: true },
+      { name: 'status', label: 'Status', type: 'select', options: ['Pending', 'Approved', 'Credited', 'Rejected'] }, { name: 'notes', label: 'Notes', type: 'textarea', rows: 2 }],
+    credit_notes: [{ name: 'ref', label: 'Credit note no.', required: true, half: true }, { name: 'date', label: 'Date', type: 'date', half: true },
+      { name: 'clientId', label: 'Client', type: 'select', options: pick('clients', clientLabel), half: true },
+      { name: 'invoiceId', label: 'Against invoice', type: 'select', options: pick('invoices', invLabel), half: true },
+      { name: 'amount', label: 'Amount', type: 'number', min: 0, step: 'any', required: true, half: true },
+      { name: 'status', label: 'Status (Applied reduces the invoice balance)', type: 'select', options: ['Draft', 'Approved', 'Applied', 'Void'], half: true },
+      { name: 'returnId', label: 'Linked return', type: 'select', options: pick('returns', (r) => `${r.ref} — ${r.item}`) }, { name: 'reason', label: 'Reason', type: 'textarea', rows: 2 }],
+    warehouses: [{ name: 'name', label: 'Warehouse name', required: true }, { name: 'location', label: 'Location' },
+      { name: 'type', label: 'Type', type: 'select', options: ['Ambient', 'Chilled', 'Bonded', 'Open yard'], half: true }, { name: 'manager', label: 'Manager', half: true },
+      { name: 'capacity', label: 'Capacity', type: 'number', min: 0, half: true }, { name: 'unit', label: 'Unit (pallets, crates, units…)', half: true }],
+    stock: [{ name: 'item', label: 'Item', required: true }, { name: 'sku', label: 'SKU / code', half: true }, { name: 'batch', label: 'Batch no.', half: true },
+      { name: 'warehouseId', label: 'Warehouse', type: 'select', options: pick('warehouses', (w) => w.name), half: true },
+      { name: 'vendorId', label: 'Supplier', type: 'select', options: pick('vendors', (v) => v.name), half: true },
+      { name: 'qty', label: 'Quantity on hand', type: 'number', min: 0, step: 'any', half: true }, { name: 'unitCost', label: 'Unit cost', type: 'number', min: 0, step: 'any', half: true },
+      { name: 'expiry', label: 'Expiry date (optional)', type: 'date', half: true }, { name: 'received', label: 'Received', type: 'date', half: true },
+      { name: 'notes', label: 'Notes', type: 'textarea', rows: 2 }],
+    transfers: [{ name: 'ref', label: 'Transfer no.', required: true, half: true }, { name: 'date', label: 'Date', type: 'date', half: true },
+      { name: 'fromId', label: 'From', type: 'select', options: pick('warehouses', (w) => w.name), half: true },
+      { name: 'toId', label: 'To', type: 'select', options: pick('warehouses', (w) => w.name), half: true },
+      { name: 'item', label: 'Item', required: true }, { name: 'qty', label: 'Quantity', type: 'number', min: 0, step: 'any', half: true },
+      { name: 'status', label: 'Status', type: 'select', options: ['Planned', 'In transit', 'Completed', 'Cancelled'], half: true }, { name: 'notes', label: 'Notes', type: 'textarea', rows: 2 }],
+    deliveries: [{ name: 'ref', label: 'Delivery no.', required: true, half: true },
+      { name: 'dispatched', label: 'Dispatched', type: 'datetime-local', half: true },
+      { name: 'invoiceId', label: 'Invoice', type: 'select', options: pick('invoices', invLabel), half: true },
+      { name: 'clientId', label: 'Client (filled from invoice if empty)', type: 'select', options: pick('clients', clientLabel), half: true },
+      { name: 'driverId', label: 'Driver', type: 'select', options: pick('drivers', (d) => d.name), half: true }, { name: 'route', label: 'Route / destination', half: true },
+      { name: 'status', label: 'Status', type: 'select', options: ['Scheduled', 'Out for delivery', 'Delivered', 'Failed'], half: true },
+      { name: 'pod', label: 'Proof of delivery', type: 'select', options: [['', '—'], 'Signed', 'Photo', 'Customer unavailable', 'Refused'], half: true },
+      { name: 'receivedBy', label: 'Received by' }, { name: 'notes', label: 'Notes', type: 'textarea', rows: 2 }],
+    drivers: [{ name: 'name', label: 'Driver name', required: true }, { name: 'phone', label: 'Phone', type: 'tel', half: true },
+      { name: 'status', label: 'Status', type: 'select', options: ['Available', 'On route', 'Off duty'], half: true },
+      { name: 'vehicle', label: 'Vehicle', half: true }, { name: 'plate', label: 'Plate number', half: true }, { name: 'route', label: 'Usual route' }],
+    cost_ledger: [{ name: 'date', label: 'Date', type: 'date', half: true }, { name: 'change', label: 'Change', type: 'select', options: ['Revalued', 'New supplier', 'New batch', 'Discount'], half: true },
+      { name: 'item', label: 'Item', required: true }, { name: 'vendorId', label: 'Supplier', type: 'select', options: pick('vendors', (v) => v.name) },
+      { name: 'oldCost', label: 'Old unit cost', type: 'number', min: 0, step: 'any', half: true }, { name: 'newCost', label: 'New unit cost', type: 'number', min: 0, step: 'any', half: true },
+      { name: 'reason', label: 'Reason', type: 'textarea', rows: 2 }],
+    employees: [{ name: 'name', label: 'Full name', required: true }, { name: 'role', label: 'Job title', half: true },
+      { name: 'department', label: 'Department', type: 'select', options: ['Management', 'Procurement', 'Sales', 'Finance', 'Logistics', 'Warehousing', 'Admin'], half: true },
+      { name: 'phone', label: 'Phone', type: 'tel', half: true }, { name: 'email', label: 'Email', type: 'email', half: true },
+      { name: 'joined', label: 'Date joined', type: 'date', half: true }, { name: 'status', label: 'Status', type: 'select', options: ['Active', 'On leave', 'Exited'], half: true },
+      { name: 'salary', label: 'Monthly gross salary', type: 'number', min: 0, step: 'any' }, { name: 'notes', label: 'Notes', type: 'textarea', rows: 2 }],
+  });
+  FIELDS.expenses.push({ name: 'vat', label: 'VAT paid (input VAT, optional)', type: 'number', min: 0, step: 'any' });
+  FIELDS.expenses[1].options = ['Freight & clearing', 'Transport', 'Logistics & fuel', 'Office', 'Rent & utilities', 'Salaries', 'Purchases', 'Marketing', 'Utilities', 'Other'];
+
+  const localNow = () => new Date(Date.now() - new Date().getTimezoneOffset() * 6e4).toISOString().slice(0, 16);
+  const DEF = {
+    deals: () => ({ stage: 'New lead', source: 'Website', stageDate: today() }),
+    returns: () => ({ ref: nextRef('returns', 'RT-'), date: today(), status: 'Pending', reason: 'Damaged in transit', qty: 1 }),
+    credit_notes: () => ({ ref: nextRef('credit_notes', 'CN-', 4), date: today(), status: 'Draft' }),
+    warehouses: () => ({ type: 'Ambient', unit: 'units' }),
+    stock: () => ({ received: today() }),
+    transfers: () => ({ ref: nextRef('transfers', 'TR-'), date: today(), status: 'Planned' }),
+    deliveries: () => ({ ref: nextRef('deliveries', 'DEL-'), status: 'Scheduled', dispatched: localNow() }),
+    drivers: () => ({ status: 'Available' }),
+    cost_ledger: () => ({ date: today(), change: 'Revalued' }),
+    employees: () => ({ status: 'Active', joined: today(), department: 'Procurement' }),
+  };
+  const TITLES = { deals: 'deal', returns: 'return', credit_notes: 'credit note', warehouses: 'warehouse', stock: 'stock batch', transfers: 'transfer', deliveries: 'delivery', drivers: 'driver', cost_ledger: 'cost entry', employees: 'staff member' };
+  const fromInvoice = (d) => { if (!d.clientId && d.invoiceId) d.clientId = (db.get('invoices', d.invoiceId) || {}).clientId || ''; };
+  const HOOK = {
+    deals(d, old) { if (!old || old.stage !== d.stage) d.stageDate = today(); },
+    returns: fromInvoice, credit_notes: fromInvoice, deliveries: fromInvoice,
+    stock(d, old) {
+      // every unit-cost change is written to the cost ledger automatically
+      if (old && Number(old.unitCost) !== Number(d.unitCost) && GT.can('write', 'cost_ledger')) {
+        db.insert('cost_ledger', { date: today(), item: d.item, vendorId: d.vendorId || '', change: 'Revalued', oldCost: Number(old.unitCost) || 0, newCost: Number(d.unitCost) || 0, reason: `Edited in Stock & batches${d.batch ? ' (batch ' + d.batch + ')' : ''}` });
+      }
+    },
+  };
+
+  /* ---------- Pipeline ---------- */
+  PAGES.pipeline = function () {
+    const deals = db.all('deals');
+    const open = deals.filter((d) => !['Won', 'Lost'].includes(d.stage));
+    const canW = GT.can('write', 'deals');
+    main.innerHTML = `<div class="page">${head('Pipeline', { label: 'NEW DEAL', act: 'add-deals' })}
+      ${subhead(`${open.length} open deal${open.length === 1 ? '' : 's'} · ${moneyShort(sum(open, (d) => d.value))} in play`)}
+      <div class="board">${STAGES.map((st) => { const ds = deals.filter((d) => (d.stage || 'New lead') === st); return `<section class="board-col">
+        <header><span>${sc(st)}</span><b class="tnum">${ds.length}</b></header><div class="board-sum tnum">${moneyShort(sum(ds, (d) => d.value))}</div>
+        ${ds.map((d) => `<article class="deal" data-edit="deals:${d.id}" tabindex="0"><b>${esc(d.company)}</b><small>${esc(d.contact || d.source || '')}</small>
+          <div class="deal-foot"><span class="tnum">${moneyShort(d.value)}</span><span class="deal-age">${['Won', 'Lost'].includes(st) ? 'Closed' : Math.max(0, daysBetween(d.stageDate || today(), today())) + 'd in stage'}</span>
+          ${canW && !['Won', 'Lost'].includes(st) ? `<button class="deal-adv" data-adv="${d.id}" title="Move to ${STAGES[STAGES.indexOf(st) + 1]}" aria-label="Move ${esc(d.company)} to ${STAGES[STAGES.indexOf(st) + 1]}">${ic('chevR')}</button>` : ''}</div></article>`).join('') || '<p class="board-empty">No deals</p>'}
+      </section>`; }).join('')}</div></div>${fab('NEW DEAL', 'add-deals')}`;
+  };
+  function advanceDeal(id) {
+    const d = db.get('deals', id); if (!d) return;
+    const next = STAGES[STAGES.indexOf(d.stage || 'New lead') + 1]; if (!next || next === 'Lost') return;
+    const patch = { stage: next, stageDate: today() };
+    if (next === 'Won' && !d.clientId && GT.can('write', 'clients') && confirm(`${d.company} is won. Add them as a client?`)) {
+      const c = db.insert('clients', { company: d.company, name: d.contact || d.company, email: d.email || '', phone: d.phone || '', address: '' });
+      patch.clientId = c.id;
+    }
+    db.update('deals', id, patch); toast(`${d.company} moved to ${next}`); PAGES.pipeline();
+  }
+
+  /* ---------- Returns & credit notes ---------- */
+  let rTab = 'returns';
+  PAGES.returns = function () {
+    const tabs = `<div class="seg tabs"><button data-rtab="returns" class="${rTab === 'returns' ? 'on' : ''}">Returns</button><button data-rtab="credit_notes" class="${rTab === 'credit_notes' ? 'on' : ''}">Credit notes</button></div>`;
+    const cl = (id) => nm('clients', id, clientLabel), inv = (id) => nm('invoices', id, 'number');
+    if (rTab === 'credit_notes') {
+      const cns = db.all('credit_notes');
+      return tablePage({ key: 'cn', title: 'Returns & credit notes', col: 'credit_notes', tabs, addLabel: 'NEW CREDIT NOTE',
+        extraTop: kpiRow([['Applied to invoices', moneyShort(sum(cns.filter((c) => c.status === 'Applied'), (c) => c.amount)), 'reduces balances', true], ['Awaiting', moneyShort(sum(cns.filter((c) => ['Draft', 'Approved'].includes(c.status)), (c) => c.amount))], ['Credit notes', cns.length]]),
+        columns: [{ label: 'Credit note', get: (r) => r.ref }, { label: 'Date', get: (r) => fmtD(r.date) }, { label: 'Client', get: (r) => cl(r.clientId) }, { label: 'Invoice', get: (r) => inv(r.invoiceId) },
+          { label: 'Amount', r: true, get: (r) => money(r.amount) }, { label: 'Status', html: true, get: (r) => sc(r.status) }] });
+    }
+    const rts = db.all('returns');
+    tablePage({ key: 'rt', title: 'Returns & credit notes', col: 'returns', tabs, addLabel: 'LOG RETURN',
+      extraTop: subhead('Damaged, expired or wrongly delivered goods sent back by clients') + kpiRow([['Pending review', rts.filter((r) => r.status === 'Pending').length, '', true], ['Approved', rts.filter((r) => r.status === 'Approved').length], ['Credited', rts.filter((r) => r.status === 'Credited').length], ['Rejected', rts.filter((r) => r.status === 'Rejected').length]]),
+      columns: [{ label: 'Return', get: (r) => r.ref }, { label: 'Date', get: (r) => fmtD(r.date) }, { label: 'Client', get: (r) => cl(r.clientId) }, { label: 'Item', get: (r) => r.item },
+        { label: 'Qty', r: true, get: (r) => num(r.qty) }, { label: 'Reason', get: (r) => r.reason }, { label: 'Invoice', get: (r) => inv(r.invoiceId) }, { label: 'Status', html: true, get: (r) => sc(r.status) }] });
+  };
+
+  /* ---------- Warehouses & stock ---------- */
+  const onHand = (wid) => sum(db.all('stock').filter((s) => s.warehouseId === wid), (s) => s.qty);
+  function batchState(s) {
+    if (!s.expiry) return 'No expiry';
+    const d = daysBetween(today(), s.expiry);
+    return d < 0 ? 'Expired' : d <= 14 ? 'Expiring soon' : d <= 45 ? 'Watch' : 'Healthy';
+  }
+  PAGES.warehouses = function () {
+    const ws = db.all('warehouses');
+    const pctOf = (w) => (Number(w.capacity) ? Math.round(onHand(w.id) / w.capacity * 100) : 0);
+    const hot = ws.filter((w) => pctOf(w) >= 90);
+    main.innerHTML = `<div class="page">${head('Warehouses', { label: 'NEW WAREHOUSE', act: 'add-warehouses' })}${subhead('Capacity and how full each site is, from the stock recorded in Stock &amp; batches')}
+      ${hot.map((w) => `<a class="notice" href="#/transfers"><b>${esc(w.name)} is ${pctOf(w)}% full</b><span>Plan a transfer →</span></a>`).join('')}
+      <div class="card-grid">${ws.map((w) => { const oh = onHand(w.id), pct = Math.min(100, pctOf(w)); return `<article class="tile" data-edit="warehouses:${w.id}" tabindex="0">
+        <h4>${esc(w.name)}</h4><small>${esc([w.location, w.type].filter(Boolean).join(' · ') || '—')}</small>
+        <div class="util"><div class="util-top"><span>Utilisation</span><b class="tnum">${Number(w.capacity) ? pctOf(w) + '%' : '—'}</b></div><div class="util-bar"><i style="width:${pct}%" class="${pct >= 90 ? 'hot' : pct >= 75 ? 'warm' : ''}"></i></div></div>
+        <dl class="tile-stats"><div><dt>Capacity</dt><dd class="tnum">${Number(w.capacity) ? num(w.capacity) + ' ' + esc(w.unit || '') : '—'}</dd></div><div><dt>On hand</dt><dd class="tnum">${num(oh)} ${esc(w.unit || '')}</dd></div></dl></article>`; }).join('') || '<div class="empty">No warehouses yet.</div>'}</div>
+    </div>${fab('NEW WAREHOUSE', 'add-warehouses')}`;
+  };
+  PAGES.stock = function () {
+    const rows = db.all('stock').slice().sort((a, b) => (a.expiry || '9999').localeCompare(b.expiry || '9999'));
+    const soon = rows.filter((s) => batchState(s) === 'Expiring soon').length, gone = rows.filter((s) => batchState(s) === 'Expired').length;
+    tablePage({ key: 'st', title: 'Stock & batches', col: 'stock', rows, addLabel: 'ADD BATCH',
+      extraTop: subhead('Sorted by expiry date, soonest first, so the oldest stock goes out first. Changing a unit cost is logged in the Cost ledger.')
+        + kpiRow([['Stock value', moneyShort(sum(rows, (s) => (s.qty || 0) * (s.unitCost || 0))), `${rows.length} batch${rows.length === 1 ? '' : 'es'}`, true], ['Expiring within 14 days', soon], ['Expired', gone], ['Warehouses', db.all('warehouses').length]]),
+      columns: [{ label: 'Item', get: (r) => r.item }, { label: 'Warehouse', get: (r) => nm('warehouses', r.warehouseId) }, { label: 'Batch', get: (r) => r.batch || '—' },
+        { label: 'Expiry', get: (r) => (r.expiry ? fmtD(r.expiry) : '—') }, { label: 'Qty', r: true, get: (r) => num(r.qty) }, { label: 'Unit cost', r: true, get: (r) => money(r.unitCost) },
+        { label: 'Value', r: true, get: (r) => money((r.qty || 0) * (r.unitCost || 0)) }, { label: 'Status', html: true, get: (r) => sc(batchState(r)) }] });
+  };
+  PAGES.transfers = function () {
+    const ts = db.all('transfers'), wh = (id) => nm('warehouses', id);
+    tablePage({ key: 'tr', title: 'Transfers', col: 'transfers', addLabel: 'NEW TRANSFER',
+      extraTop: subhead('Stock moved between warehouses. Update quantities in Stock &amp; batches when a transfer completes.')
+        + kpiRow([['In transit', ts.filter((t) => t.status === 'In transit').length, '', true], ['Planned', ts.filter((t) => t.status === 'Planned').length], ['Completed', ts.filter((t) => t.status === 'Completed').length]]),
+      columns: [{ label: 'Transfer', get: (r) => r.ref }, { label: 'Date', get: (r) => fmtD(r.date) }, { label: 'From', get: (r) => wh(r.fromId) }, { label: 'To', get: (r) => wh(r.toId) },
+        { label: 'Item', get: (r) => r.item }, { label: 'Qty', r: true, get: (r) => num(r.qty) }, { label: 'Status', html: true, get: (r) => sc(r.status) }] });
+  };
+
+  /* ---------- Deliveries & drivers ---------- */
+  const fmtDT = (s) => (s ? `${fmtD(s.slice(0, 10))} ${s.slice(11, 16)}` : '—');
+  PAGES.deliveries = function () {
+    const ds = db.all('deliveries');
+    const delivered = ds.filter((d) => d.status === 'Delivered');
+    const pod = delivered.length ? Math.round(delivered.filter((d) => ['Signed', 'Photo'].includes(d.pod)).length / delivered.length * 100) + '%' : '—';
+    tablePage({ key: 'dl', title: 'Deliveries', col: 'deliveries', addLabel: 'NEW DELIVERY',
+      extraTop: subhead('Dispatch and proof-of-delivery tracking')
+        + kpiRow([['Out for delivery', ds.filter((d) => d.status === 'Out for delivery').length, '', true], ['Delivered today', delivered.filter((d) => (d.dispatched || '').slice(0, 10) === today()).length], ['Failed', ds.filter((d) => d.status === 'Failed').length, 'needs a redo'], ['Proof captured', pod, 'of delivered']]),
+      columns: [{ label: 'Delivery', get: (r) => r.ref }, { label: 'Invoice', get: (r) => nm('invoices', r.invoiceId, 'number') }, { label: 'Client', get: (r) => nm('clients', r.clientId, clientLabel) },
+        { label: 'Driver', get: (r) => nm('drivers', r.driverId) }, { label: 'Route', get: (r) => r.route || '—' }, { label: 'Dispatched', get: (r) => fmtDT(r.dispatched) },
+        { label: 'Status', html: true, get: (r) => sc(r.status) }, { label: 'Proof', get: (r) => r.pod || '—' }] });
+  };
+  PAGES.drivers = function () {
+    const drs = db.all('drivers');
+    const todayCount = (id) => db.all('deliveries').filter((d) => d.driverId === id && (d.dispatched || '').slice(0, 10) === today()).length;
+    main.innerHTML = `<div class="page">${head('Drivers & routes', { label: 'ADD DRIVER', act: 'add-drivers' })}${subhead('Fleet and route assignments')}
+      ${kpiRow([['Available', drs.filter((d) => d.status === 'Available').length, '', true], ['On route', drs.filter((d) => d.status === 'On route').length], ['Off duty', drs.filter((d) => d.status === 'Off duty').length]])}
+      <div class="card-grid">${drs.map((d) => `<article class="tile" data-edit="drivers:${d.id}" tabindex="0">
+        <div class="tile-top"><h4>${esc(d.name)}</h4>${sc(d.status)}</div><small>${esc([d.vehicle, d.plate, d.route].filter(Boolean).join(' · ') || '—')}</small>
+        <dl class="tile-stats"><div><dt>Deliveries today</dt><dd class="tnum">${todayCount(d.id)}</dd></div><div><dt>Phone</dt><dd>${d.phone ? `<a href="tel:${esc(d.phone)}" data-stop>${esc(d.phone)}</a>` : '—'}</dd></div></dl></article>`).join('') || '<div class="empty">No drivers yet.</div>'}</div>
+    </div>${fab('ADD DRIVER', 'add-drivers')}`;
+  };
+
+  /* ---------- Cost ledger ---------- */
+  PAGES.costledger = function () {
+    const rows = db.all('cost_ledger').slice().sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    const pct = (r) => (Number(r.oldCost) ? ((r.newCost - r.oldCost) / r.oldCost) * 100 : null);
+    tablePage({ key: 'cl', title: 'Cost ledger', col: 'cost_ledger', rows, addLabel: 'ADD COST ENTRY',
+      extraTop: subhead('Auditable history of item cost changes. Edits to unit cost in Stock &amp; batches are added here automatically.'),
+      columns: [{ label: 'Date', get: (r) => fmtD(r.date) }, { label: 'Item', get: (r) => r.item }, { label: 'Change', html: true, get: (r) => sc(r.change) }, { label: 'Supplier', get: (r) => nm('vendors', r.vendorId) },
+        { label: 'Old cost', r: true, get: (r) => (r.oldCost ? money(r.oldCost) : '—') }, { label: 'New cost', r: true, get: (r) => money(r.newCost) },
+        { label: 'Change %', r: true, html: true, get: (r) => { const p = pct(r); return p === null ? '—' : `<span style="color:${p > 0 ? 'var(--red)' : 'var(--green)'}">${p > 0 ? '+' : ''}${p.toFixed(1)}%</span>`; } },
+        { label: 'Reason', get: (r) => r.reason || '—' }] });
+  };
+
+  /* ---------- Financial statements ---------- */
+  let plPeriod = 'month';
+  const periodRange = (p) => (p === 'last' ? monthRange(-1) : p === 'ytd' ? [new Date().getFullYear() + '-01-01', today()] : monthRange(0));
+  function plFigures(r) {
+    const invs = db.all('invoices').filter((i) => i.status !== 'Draft' && inRange(i.date, r));
+    const credits = sum(db.all('credit_notes').filter((c) => c.status === 'Applied' && inRange(c.date, r)), (c) => c.amount);
+    const sales = sum(invs, (i) => { const t = totals(i); return t.subtotal - t.discount; });
+    const revenue = sales - credits;
+    const exps = db.all('expenses').filter((e) => inRange(e.date, r));
+    const net = (e) => (Number(e.amount) || 0) - (Number(e.vat) || 0);
+    const procured = sum(db.all('procurement').filter((p) => ['Ordered', 'In transit', 'Delivered'].includes(p.status) && inRange(p.date, r)), (p) => p.value);
+    const cogs = procured + sum(exps.filter((e) => e.category === 'Purchases'), net);
+    const opex = {};
+    exps.filter((e) => e.category !== 'Purchases').forEach((e) => { const k = e.category || 'Other'; opex[k] = (opex[k] || 0) + net(e); });
+    const opTotal = sum(Object.values(opex), (v) => v);
+    return { sales, credits, revenue, procured, cogs, gross: revenue - cogs, opex, opTotal, net: revenue - cogs - opTotal };
+  }
+  const pctOfRev = (v, f) => (f.revenue ? `${((v / f.revenue) * 100).toFixed(1)}% margin` : '');
+  PAGES.pnl = function () {
+    const f = plFigures(periodRange(plPeriod));
+    const line = (label, v, cls = '') => `<tr class="static ${cls}"><td>${label}</td><td class="r tnum">${v < 0 ? '(' + money(-v) + ')' : money(v)}</td></tr>`;
+    main.innerHTML = `<div class="page">${head('P&L statement')}
+      <div class="seg pl-seg">${[['month', 'This month'], ['last', 'Last month'], ['ytd', 'Year to date']].map(([k, l]) => `<button data-pl="${k}" class="${plPeriod === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+      ${kpiRow([['Revenue', moneyShort(f.revenue), 'excluding VAT', true], ['Gross profit', moneyShort(f.gross), pctOfRev(f.gross, f)], ['Operating expenses', moneyShort(f.opTotal)], ['Net profit', moneyShort(f.net), pctOfRev(f.net, f)]])}
+      <div class="panel"><table class="statement"><tbody>
+        <tr class="static sec"><td colspan="2">Revenue</td></tr>
+        ${line('Invoiced sales (excl. VAT)', f.sales)}${f.credits ? line('Less credit notes applied', -f.credits) : ''}
+        ${line('Total revenue', f.revenue, 'sub')}
+        <tr class="static sec"><td colspan="2">Cost of sales</td></tr>
+        ${line('Procurement orders and purchases', f.cogs)}
+        ${line(`Gross profit${f.revenue ? ` <span class="muted">(${((f.gross / f.revenue) * 100).toFixed(1)}%)</span>` : ''}`, f.gross, 'sub')}
+        <tr class="static sec"><td colspan="2">Operating expenses</td></tr>
+        ${Object.entries(f.opex).sort((a, b) => b[1] - a[1]).map(([k, v]) => line(esc(k), v)).join('') || '<tr class="static"><td class="muted" colspan="2">No operating expenses in this period</td></tr>'}
+        ${line('Total operating expenses', f.opTotal, 'sub')}
+        ${line(`Net profit${f.revenue ? ` <span class="muted">(${((f.net / f.revenue) * 100).toFixed(1)}%)</span>` : ''}`, f.net, 'grand')}
+      </tbody></table>
+      <p class="page-sub" style="margin:14px 0 0">Figures exclude VAT. Cost of sales counts procurement orders that are Ordered, In transit or Delivered, plus expenses in the Purchases category.</p></div></div>`;
+  };
+
+  PAGES.cashflow = function () {
+    const s = db.settings(), opening0 = Number(s.openingCash) || 0;
+    const [a, b] = monthRange(0);
+    const pays = db.all('payments'), exps = db.all('expenses');
+    const openM = opening0 + sum(pays.filter((p) => p.date < a), (p) => p.amount) - sum(exps.filter((e) => e.date < a), (e) => e.amount);
+    const cin = sum(pays.filter((p) => inRange(p.date, [a, b])), (p) => p.amount), cout = sum(exps.filter((e) => inRange(e.date, [a, b])), (e) => e.amount);
+    const now = new Date(), mon = new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7));
+    const weeks = [];
+    for (let k = 5; k >= 0; k--) {
+      const st = new Date(mon); st.setDate(mon.getDate() - 7 * k); const en = new Date(st); en.setDate(st.getDate() + 6);
+      const r = [GT.iso(st), GT.iso(en)];
+      weeks.push({ label: `${st.getDate()} ${MONTHS[st.getMonth()].slice(0, 3)}`, cin: sum(pays.filter((p) => inRange(p.date, r)), (p) => p.amount), cout: sum(exps.filter((e) => inRange(e.date, r)), (e) => e.amount) });
+    }
+    const max = Math.max(1, ...weeks.map((w) => Math.max(w.cin, w.cout)));
+    main.innerHTML = `<div class="page">${head('Cash flow')}${subhead(`${MONTHS[now.getMonth()]} to date. Cash in is payments received; cash out is expenses (including paid payroll).`)}
+      ${!opening0 && GT.can('settings') ? '<a class="notice" href="#/settings"><b>Set your starting cash balance for accurate balances</b><span>Settings →</span></a>' : ''}
+      ${kpiRow([['Opening balance', moneyShort(openM), `1 ${MONTHS[now.getMonth()]}`], ['Cash in', moneyShort(cin)], ['Cash out', moneyShort(cout)], ['Closing balance', moneyShort(openM + cin - cout), 'today', true]])}
+      <div class="panel"><h3>Weekly cash in vs cash out <span class="legend"><span><i style="background:var(--orange)"></i>Cash in</span><span><i style="background:#3b3b44"></i>Cash out</span></span></h3>
+        <div class="chart">${weeks.map((w) => `<div class="col"><div class="bars"><div class="bar rev" style="height:${(w.cin / max) * 100}%" data-v="${moneyShort(w.cin)}"></div><div class="bar exp" style="height:${(w.cout / max) * 100}%" data-v="${moneyShort(w.cout)}"></div></div></div>`).join('')}</div>
+        <div class="chart-x">${weeks.map((w) => `<span>${w.label}</span>`).join('')}</div></div></div>`;
+  };
+
+  let vatYm = null;
+  PAGES.vat = function () {
+    vatYm = vatYm || today().slice(0, 7);
+    const [y, m] = vatYm.split('-').map(Number), r = [vatYm + '-01', GT.iso(new Date(y, m, 0))];
+    const out = db.all('invoices').filter((i) => i.status !== 'Draft' && i.taxOn && inRange(i.date, r)).map((i) => { const t = totals(i); return { date: i.date, type: 'Output', ref: i.number, who: clientName(i), base: t.subtotal - t.discount, vat: t.tax }; });
+    const inp = db.all('expenses').filter((e) => Number(e.vat) > 0 && inRange(e.date, r)).map((e) => ({ date: e.date, type: 'Input', ref: e.desc, who: nm('vendors', e.vendorId), base: (Number(e.amount) || 0) - Number(e.vat), vat: Number(e.vat) }));
+    const rows = out.concat(inp).sort((a, b) => b.date.localeCompare(a.date));
+    const o = sum(out, (x) => x.vat), i = sum(inp, (x) => x.vat);
+    main.innerHTML = `<div class="page">${head('VAT summary')}
+      <div class="month-pill vat-nav"><button data-vatnav="-1" aria-label="Previous month">${ic('chevL', 'i" style="width:16px;height:16px')}</button><span>${ic('cal', 'i" style="width:18px;height:18px')}${monthName(vatYm)}</span><button data-vatnav="1" aria-label="Next month">${ic('chevR', 'i" style="width:16px;height:16px')}</button></div>
+      ${subhead(`VAT at ${Number(db.settings().taxRate)}%: output VAT on your invoices vs input VAT on expenses. Enter “VAT paid” when logging an expense to claim input VAT.`)}
+      ${kpiRow([['Output VAT (on sales)', money(o)], ['Input VAT (on purchases)', money(i)], ['Net VAT payable', money(o - i), o - i < 0 ? 'refundable' : 'for this month', true]])}
+      <div class="table-wrap"><table><thead><tr><th>Date</th><th>Type</th><th>Reference</th><th>Client / supplier</th><th class="r">Base amount</th><th class="r">VAT</th></tr></thead><tbody>
+      ${rows.map((x) => `<tr class="static"><td data-label="Date">${fmtD(x.date)}</td><td data-label="Type">${chip(x.type === 'Output' ? 'Request' : 'Ordered', x.type)}</td><td data-label="Reference">${esc(x.ref)}</td><td data-label="Client / supplier">${esc(x.who)}</td><td class="r tnum" data-label="Base amount">${money(x.base)}</td><td class="r tnum" data-label="VAT">${money(x.vat)}</td></tr>`).join('') || '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:40px">No VAT transactions this month.</td></tr>'}
+      </tbody></table></div></div>`;
+  };
+
+  /* ---------- HR: staff, attendance, payroll ---------- */
+  PAGES.employees = function () {
+    const es = db.all('employees'), active = es.filter((e) => e.status !== 'Exited');
+    const showPay = GT.can('read', 'payroll') || GT.can('write', 'employees');
+    tablePage({ key: 'em', title: 'Staff', col: 'employees', addLabel: 'ADD STAFF',
+      extraTop: subhead('Employee directory (separate from admin accounts)')
+        + kpiRow([['Headcount', active.length, '', true], ['On leave', es.filter((e) => e.status === 'On leave').length], showPay ? ['Monthly payroll', moneyShort(sum(active, (e) => e.salary)), 'gross'] : ['Departments', new Set(active.map((e) => e.department)).size]]),
+      columns: [{ label: 'Name', get: (r) => r.name }, { label: 'Job title', get: (r) => r.role || '—' }, { label: 'Department', get: (r) => r.department || '—' }, { label: 'Phone', get: (r) => r.phone || '—' },
+        { label: 'Joined', get: (r) => (r.joined ? fmtD(r.joined) : '—') }].concat(showPay ? [{ label: 'Salary', r: true, get: (r) => money(r.salary) }] : []).concat([{ label: 'Status', html: true, get: (r) => sc(r.status) }]) });
+  };
+
+  let attDate = null;
+  PAGES.attendance = function () {
+    attDate = attDate || today();
+    const emps = db.all('employees').filter((e) => e.status !== 'Exited');
+    const recs = db.all('attendance').filter((a) => a.date === attDate);
+    const recOf = (id) => recs.find((a) => a.employeeId === id);
+    const count = (st) => emps.filter((e) => (recOf(e.id) || {}).status === st).length;
+    const unmarked = emps.filter((e) => !recOf(e.id)).length;
+    const canW = GT.can('write', 'attendance');
+    main.innerHTML = `<div class="page">${head('Attendance')}
+      <div class="date-nav"><button class="chip-btn" data-attnav="-1" aria-label="Previous day">${ic('chevL')}</button><input type="date" value="${attDate}" data-attdate aria-label="Date"><button class="chip-btn" data-attnav="1" aria-label="Next day">${ic('chevR')}</button>${attDate !== today() ? '<button class="ghost" data-attnav="0">Today</button>' : ''}</div>
+      ${kpiRow([['Present', count('Present'), '', true], ['Late', count('Late')], ['On leave', count('On leave')], ['Absent', count('Absent')]])}
+      ${unmarked ? subhead(`${unmarked} of ${emps.length} not marked yet${canW ? ' — tap a status to mark them' : ''}`) : ''}
+      <div class="table-wrap"><table><thead><tr><th>Staff</th><th>Department</th><th>Clock in</th><th>Clock out</th><th>Status</th>${canW ? '<th>Mark</th>' : ''}</tr></thead><tbody>
+      ${emps.map((e) => { const r = recOf(e.id) || {}; return `<tr data-att="${e.id}"><td data-label="Staff">${esc(e.name)}</td><td data-label="Department">${esc(e.department || '—')}</td><td data-label="Clock in" class="tnum">${esc(r.clockIn || '—')}</td><td data-label="Clock out" class="tnum">${esc(r.clockOut || '—')}</td><td data-label="Status">${r.status ? sc(r.status) : '<span class="muted">Not marked</span>'}</td>${canW ? `<td data-label="Mark"><div class="mark-seg">${['Present', 'Late', 'On leave', 'Absent'].map((st) => `<button type="button" data-mark="${e.id}|${st}" class="${r.status === st ? 'on' : ''}">${st}</button>`).join('')}</div></td>` : ''}</tr>`; }).join('') || `<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:40px">Add staff under HR &amp; payroll → Staff first.</td></tr>`}
+      </tbody></table></div></div>`;
+  };
+  function markAttendance(eid, st) {
+    const r = db.all('attendance').find((a) => a.date === attDate && a.employeeId === eid);
+    const patch = { status: st };
+    if ((st === 'Present' || st === 'Late') && !(r && r.clockIn) && attDate === today()) patch.clockIn = new Date().toTimeString().slice(0, 5);
+    if (r) db.update('attendance', r.id, patch); else db.insert('attendance', { date: attDate, employeeId: eid, clockIn: '', clockOut: '', note: '', ...patch });
+    PAGES.attendance();
+  }
+  function attendanceModal(eid) {
+    const e = db.get('employees', eid); if (!e) return;
+    const r = db.all('attendance').find((a) => a.date === attDate && a.employeeId === eid);
+    formModal(`${e.name} · ${fmtLong(attDate)}`, [
+      { name: 'status', label: 'Status', type: 'select', options: ['Present', 'Late', 'On leave', 'Absent'] },
+      { name: 'clockIn', label: 'Clock in', type: 'time', half: true }, { name: 'clockOut', label: 'Clock out', type: 'time', half: true },
+      { name: 'note', label: 'Note', type: 'textarea', rows: 2 }],
+    r || { status: 'Present' }, (d) => { if (r) db.update('attendance', r.id, d); else db.insert('attendance', { date: attDate, employeeId: eid, ...d }); toast('Attendance saved'); PAGES.attendance(); },
+    r ? { onDelete: () => { db.remove('attendance', r.id); PAGES.attendance(); } } : {});
+  }
+
+  let payRun = null;
+  PAGES.payroll = function () {
+    const runs = db.all('payroll').slice().sort((a, b) => (b.period || '').localeCompare(a.period || ''));
+    const sel = runs.find((r) => r.id === payRun) || runs[0];
+    const canW = GT.can('write', 'payroll');
+    const cell = (lbl, v, b) => `<td class="r tnum" data-label="${lbl}">${b ? '<b>' : ''}${money(v)}${b ? '</b>' : ''}</td>`;
+    main.innerHTML = `<div class="page">${head('Payroll', { label: 'RUN PAYROLL', act: 'run-payroll' })}${subhead('Monthly runs from staff salaries, with PAYE and pension deductions. Marking a run as paid logs it as a salary expense.')}
+      <div class="grid2 payroll-grid"><div class="panel"><h3>Payroll runs</h3>
+        ${runs.map((r) => `<div class="mini-row${sel && r.id === sel.id ? ' sel' : ''}" data-run="${r.id}"><div>${monthName(r.period)}<small>${(r.lines || []).length} staff · net ${money(r.net)}</small></div>${sc(r.status)}</div>`).join('') || '<p class="muted" style="padding:8px 0">No payroll runs yet.</p>'}</div>
+      <div class="panel">${sel ? `<h3>${monthName(sel.period)} breakdown ${sc(sel.status)}</h3>
+        <div class="table-wrap flat"><table><thead><tr><th>Staff</th><th class="r">Gross</th><th class="r">PAYE + pension</th><th class="r">Net</th></tr></thead><tbody>
+          ${(sel.lines || []).map((l) => `<tr class="static"><td data-label="Staff">${esc(l.name)}</td>${cell('Gross', l.gross)}${cell('Deductions', l.deductions)}${cell('Net', l.net)}</tr>`).join('')}
+          <tr class="static total"><td data-label="Total"><b>Total</b></td>${cell('Gross', sel.gross, 1)}${cell('Deductions', sel.deductions, 1)}${cell('Net', sel.net, 1)}</tr></tbody></table></div>
+        ${canW ? `<div class="modal-foot">${sel.status !== 'Paid' ? '<button class="ghost danger left" data-payact="del">Delete run</button><button class="pill-btn solid" data-payact="paid">Mark as paid</button>' : `<span class="muted left">Paid ${fmtLong(sel.paidDate || sel.date)}${sel.expenseId ? ' · logged as a salary expense' : ''}</span>`}</div>` : ''}`
+        : '<h3>Breakdown</h3><p class="muted">Run payroll to see a breakdown.</p>'}</div></div></div>${fab('RUN PAYROLL', 'run-payroll')}`;
+  };
+  function runPayrollModal() {
+    if (!GT.can('write', 'payroll')) return toast("Your role doesn't allow this");
+    const emps = db.all('employees').filter((e) => e.status !== 'Exited' && Number(e.salary) > 0);
+    if (!emps.length) return toast('Add staff with a monthly salary first');
+    const m = formModal('Run payroll', [{ name: 'period', label: 'Month', type: 'month', required: true, half: true }, { name: 'pct', label: 'Deductions % (PAYE + pension)', type: 'number', step: 'any', min: 0, half: true }],
+      { period: today().slice(0, 7), pct: Number(db.settings().payrollDeductionPct ?? 10) }, (d) => {
+        if (db.all('payroll').some((r) => r.period === d.period)) { toast(`There is already a payroll run for ${monthName(d.period)}`); return; }
+        const lines = emps.map((e) => { const gross = Number(e.salary) || 0, ded = Math.round(gross * (Number(d.pct) || 0)) / 100; return { employeeId: e.id, name: e.name, gross, deductions: ded, net: gross - ded }; });
+        const rec = db.insert('payroll', { period: d.period, date: today(), pct: Number(d.pct) || 0, status: 'Processing', lines, gross: sum(lines, (l) => l.gross), deductions: sum(lines, (l) => l.deductions), net: sum(lines, (l) => l.net) });
+        payRun = rec.id; toast('Payroll run created'); PAGES.payroll();
+      });
+    $('.modal-foot', m).insertAdjacentHTML('beforebegin', `<p class="page-sub" style="margin:-4px 0 12px">${emps.length} active staff with salaries · total gross ${money(sum(emps, (e) => e.salary))}</p>`);
+  }
+  function payAction(a) {
+    const runs = db.all('payroll').slice().sort((x, y) => (y.period || '').localeCompare(x.period || ''));
+    const sel = runs.find((r) => r.id === payRun) || runs[0]; if (!sel) return;
+    if (a === 'del') { if (confirm(`Delete the ${monthName(sel.period)} payroll run?`)) { db.remove('payroll', sel.id); payRun = null; PAGES.payroll(); } return; }
+    if (a === 'paid') {
+      const patch = { status: 'Paid', paidDate: today() };
+      if (GT.can('write', 'expenses')) {
+        const exp = db.insert('expenses', { date: today(), category: 'Salaries', desc: `Payroll — ${monthName(sel.period)}`, amount: sel.gross, vendorId: '', vat: 0, payrollId: sel.id });
+        patch.expenseId = exp.id;
+      }
+      db.update('payroll', sel.id, patch); toast('Payroll marked as paid'); PAGES.payroll();
+    }
+  }
+
+  /* ---------- module clicks ---------- */
+  function moduleClick(e) {
+    const t = e.target; let x;
+    if (t.closest('[data-stop]')) return true;
+    if ((x = t.closest('[data-adv]'))) { advanceDeal(x.dataset.adv); return true; }
+    if ((x = t.closest('[data-rtab]'))) { rTab = x.dataset.rtab; PAGES.returns(); return true; }
+    if ((x = t.closest('[data-mark]'))) { const [eid, st] = x.dataset.mark.split('|'); markAttendance(eid, st); return true; }
+    if ((x = t.closest('[data-attnav]'))) { const n = Number(x.dataset.attnav); if (!n) attDate = today(); else { const d = pd(attDate); d.setDate(d.getDate() + n); attDate = GT.iso(d); } PAGES.attendance(); return true; }
+    if ((x = t.closest('[data-att]'))) { if (GT.can('write', 'attendance')) attendanceModal(x.dataset.att); return true; }
+    if ((x = t.closest('[data-run]'))) { payRun = x.dataset.run; PAGES.payroll(); return true; }
+    if ((x = t.closest('[data-payact]'))) { payAction(x.dataset.payact); return true; }
+    if ((x = t.closest('[data-pl]'))) { plPeriod = x.dataset.pl; PAGES.pnl(); return true; }
+    if ((x = t.closest('[data-vatnav]'))) { const [y, m] = vatYm.split('-').map(Number); vatYm = GT.iso(new Date(y, m - 1 + Number(x.dataset.vatnav), 1)).slice(0, 7); PAGES.vat(); return true; }
+    if (t.closest('[data-act="run-payroll"]')) { runPayrollModal(); return true; }
+    return false;
+  }
+  main.addEventListener('change', (e) => { if (e.target.matches('[data-attdate]') && e.target.value) { attDate = e.target.value; PAGES.attendance(); } });
+
+
   /* ================= EVENTS ================= */
   main.addEventListener('click', (e) => {
+    if (moduleClick(e)) return;
     const go = e.target.closest('[data-go]'); if (go) { location.hash = go.dataset.go; return; }
     const enq = e.target.closest('[data-enq]'); if (enq) return enquiryModal(enq.dataset.enq);
     const ed = e.target.closest('[data-edit]'); if (ed) { const [c, id] = ed.dataset.edit.split(':'); return editRecord(c, id); }
@@ -705,6 +1175,7 @@
     const a = e.target.closest('[data-act]'); if (!a) return;
     const act = a.dataset.act;
     const k = location.hash.includes('quotations') ? 'quotations' : 'invoices';
+    if (/^add-/.test(act) && act !== 'add-staff' && FIELDS[act.slice(4)]) return editRecord(act.slice(4));
     switch (act) {
       case 'search': return searchModal();
       case 'prev': case 'next': { const L = LIST[k]; const [y, m] = L.ym.split('-').map(Number); const d = L.mode === 'year' ? new Date(y + (act === 'next' ? 1 : -1), m - 1, 1) : new Date(y, m - 1 + (act === 'next' ? 1 : -1), 1); L.ym = GT.iso(d).slice(0, 7); return docList(k); }

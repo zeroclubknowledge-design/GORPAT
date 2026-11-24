@@ -35,6 +35,18 @@ select public.make_head_admin('you@example.com');
 - For each admin, the head admin sets every section to **No access**, **View** or **Edit**: Clients, Website enquiries, Procurement, Quotations, Invoices, Payments, Expenses, Vendors, Reports. Presets (Full access, Procurement, Finance, View only) fill the grid in one tap. Set an admin to **Disabled** to remove all access.
 - These limits are enforced in the database (Row Level Security), not just hidden in the menu.
 
+## Admin modules
+
+The admin sidebar is grouped into:
+
+- **Sales & CRM**: Clients (and website enquiries), Pipeline (deal board by stage), Quotations, Invoices, Returns & credit notes (applied credit notes reduce the invoice balance), Payments
+- **Procurement & logistics**: Procurement, Vendors, Warehouses (capacity and how full each site is), Stock & batches (sorted by expiry), Transfers, Deliveries (with proof of delivery), Drivers & routes
+- **Financials**: Expenses (with optional input VAT), P&L statement, Cash flow, VAT summary, Cost ledger (unit-cost changes in Stock & batches are logged automatically), Reports
+- **HR & payroll**: Staff, Attendance (daily marking), Payroll (monthly runs; marking a run as paid logs a salary expense)
+- **Admin**: Admins & settings (approvals, per-section access, business settings, starting cash balance, payroll deduction %)
+
+Run  in the SQL Editor (after 002) to enable these modules. Every module is a section in the access editor (No access / View / Edit).
+
 ## How the website and admin connect
 
 - **Request a quotation** → `submit_quote` → appears in admin **Quotations** as "Website request".
