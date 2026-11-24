@@ -490,7 +490,7 @@ tbody tr.static:hover { background: transparent; }
 tr.total td { border-top: 2px solid var(--line); }
 
 /* pipeline board */
-.board { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(230px, 1fr); gap: 12px; overflow-x: auto; padding-bottom: 8px; scroll-snap-type: x proximity; }
+.board { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
 .board-col { background: rgba(255, 255, 255, .55); border: 1px solid var(--line); border-radius: 14px; padding: 12px; display: flex; flex-direction: column; gap: 8px; min-height: 160px; scroll-snap-align: start; }
 .board-col header { display: flex; justify-content: space-between; align-items: center; }
 .board-col header b { font-size: 13px; color: var(--muted); }
@@ -557,7 +557,6 @@ tr.total td { border-top: 2px solid var(--line); }
 
 @media (max-width: 960px) { .payroll-grid { grid-template-columns: 1fr; } }
 @media (max-width: 760px) {
-  .board { grid-auto-columns: 82%; }
   .statement { display: table; }
   .panel .statement td { padding: 10px 4px; }
   .mark-seg { width: 100%; }
@@ -566,7 +565,7 @@ tr.total td { border-top: 2px solid var(--line); }
   .view-list { grid-template-columns: 1fr; gap: 2px; }
   .view-list dd { margin-bottom: 10px; }
 }
-.side-nav { overflow-x: hidden; scrollbar-width: thin; scrollbar-color: #d6d6de transparent; }
+.side-nav { overflow-x: hidden; }
 .side-nav a > span:not(.badge) { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 @media (min-width: 761px) and (max-width: 1100px) { .side-nav a { font-size: 14px; gap: 12px; } .side-nav a svg.i { width: 22px; height: 22px; } }
 @media (max-width: 480px) {
@@ -605,3 +604,11 @@ tr.total td { border-top: 2px solid var(--line); }
   .acct-id h2 { font-size: 19px; }
 }
 @media (prefers-reduced-motion: reduce) { .acct-hero::before { animation: none; } }
+
+/* pipeline: 3 stages per row on desktop/tablet, 2 on large phones, stacked on small phones */
+@media (max-width: 760px) { .board { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; } }
+@media (max-width: 520px) { .board { grid-template-columns: 1fr; } .board-col { min-height: 0; } }
+
+/* no visible scrollbars anywhere (scrolling still works) */
+html, body, * { scrollbar-width: none; -ms-overflow-style: none; }
+*::-webkit-scrollbar { display: none; width: 0; height: 0; }
