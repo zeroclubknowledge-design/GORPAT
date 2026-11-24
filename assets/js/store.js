@@ -321,6 +321,14 @@
     get user() { return cache.user; }, get perms() { return cache.perms; },
     get pendingAdmins() { return cache.pendingAdmins || 0; }, SECTIONS, permsFor,
     roleLabel(r) { return { Owner: 'Head admin', Staff: 'Admin', Pending: 'Awaiting approval', Disabled: 'Disabled' }[r] || r; },
+    // true when the head admin granted this section (View or Edit) — decides which pages show in the menu.
+    // Related records loaded only to display names (e.g. clients on deliveries) don't count.
+    hasSection(k) {
+      const u = cache.user || {};
+      if (u.role === 'Owner') return true;
+      if (u.role === 'Staff') { const l = (u.access || {})[k]; return l === 'view' || l === 'edit'; }
+      const c = k === 'returns' ? 'returns' : k; return !!(cache.perms && cache.perms.read.includes(c));
+    },
     can(kind, col) { const p = cache.perms || NONE; return !!(kind === 'read' || kind === 'write' ? p[kind].includes(col) : p[kind]); },
   };
 })();

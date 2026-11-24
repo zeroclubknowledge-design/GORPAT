@@ -20,7 +20,7 @@ Public website plus a staff admin dashboard (clients, procurement, invoices, quo
    - **Redirect URLs**: add the same URL (and `http://localhost:5520/admin/` for local testing).
 
    This makes the confirmation and password-reset emails link back to the admin.
-4. In the admin, open **Admins & settings** and enter your real bank details (they print on invoices).
+4. In the admin, open **Account → Business settings** and enter your real bank details (they print on invoices).
 
 ## Head admin and admin access
 
@@ -31,7 +31,7 @@ select public.make_head_admin('you@example.com');
 ```
 
 - There is exactly **one head admin**. Only the head admin approves new admins, sets what each admin can access, and changes settings. The role can only be transferred by running `make_head_admin` again in the SQL Editor.
-- New admins open the admin page, choose **Request admin access**, and confirm their email. They wait with no access until the head admin reviews them under **Admins & settings**.
+- New admins open the admin page, choose **Request admin access**, and confirm their email. They wait with no access until the head admin reviews them under **Account → Admins**.
 - For each admin, the head admin sets every section to **No access**, **View** or **Edit**: Clients, Website enquiries, Procurement, Quotations, Invoices, Payments, Expenses, Vendors, Reports. Presets (Full access, Procurement, Finance, View only) fill the grid in one tap. Set an admin to **Disabled** to remove all access.
 - These limits are enforced in the database (Row Level Security), not just hidden in the menu.
 
@@ -43,7 +43,7 @@ The admin sidebar is grouped into:
 - **Procurement & logistics**: Procurement, Vendors, Warehouses (capacity and how full each site is), Stock & batches (sorted by expiry), Transfers, Deliveries (with proof of delivery), Drivers & routes
 - **Financials**: Expenses (with optional input VAT), P&L statement, Cash flow, VAT summary, Cost ledger (unit-cost changes in Stock & batches are logged automatically), Reports
 - **HR & payroll**: Staff, Attendance (daily marking), Payroll (monthly runs; marking a run as paid logs a salary expense)
-- **Admin**: Admins & settings (approvals, per-section access, business settings, starting cash balance, payroll deduction %)
+- **Admin**: Account (shows your account type; head admin also gets Business settings and Admins: approvals, per-section access, starting cash balance, payroll deduction %)
 
 Run `supabase/003_operations_modules.sql` in the SQL Editor (after 002) to enable these modules. Every module is a section in the access editor (No access / View / Edit).
 

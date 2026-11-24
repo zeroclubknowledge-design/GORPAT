@@ -122,13 +122,13 @@
     ['Procurement & logistics', [['procurement', 'Procurement'], ['vendors', 'Vendors'], ['warehouses', 'Warehouses'], ['stock', 'Stock & batches'], ['transfers', 'Transfers'], ['deliveries', 'Deliveries'], ['drivers', 'Drivers & routes']]],
     ['Financials', [['expenses', 'Expenses'], ['pnl', 'P&L statement'], ['cashflow', 'Cash flow'], ['vat', 'VAT summary'], ['costledger', 'Cost ledger'], ['reports', 'Reports']]],
     ['HR & payroll', [['employees', 'Staff'], ['attendance', 'Attendance'], ['payroll', 'Payroll']]],
-    ['Admin', [['settings', 'Admins & settings']]],
+    ['Admin', [['account', 'Account']]],
   ];
   function renderNav(active) {
     const newReq = db.all('quotations').filter((q) => q.status === 'Request').length;
     const newEnq = db.all('enquiries').filter((q) => q.status === 'New').length;
     const expiring = db.all('stock').filter((b) => b.expiry && b.expiry <= GT.iso(new Date(Date.now() + 14 * 864e5))).length;
-    const badge = { quotations: newReq, clients: newEnq, settings: GT.pendingAdmins, stock: expiring };
+    const badge = { quotations: newReq, clients: newEnq, account: GT.pendingAdmins, stock: expiring };
     const mb = $('#menuBtn'); if (mb) { const has = Object.keys(badge).some((k) => badge[k] && canSee(k)); mb.querySelector('.dot') ? (!has && mb.querySelector('.dot').remove()) : (has && mb.insertAdjacentHTML('beforeend', '<span class="dot"></span>')); }
     $('#sideNav').innerHTML = NAV.map(([g, items]) => {
       const vis = items.filter(([k]) => canSee(k));
@@ -142,17 +142,16 @@
   function canSee(page) {
     if (page === 'overview') return true;
     if (page === 'reports' || page === 'pnl' || page === 'cashflow' || page === 'vat') return GT.can('reports');
-    if (page === 'settings') return GT.can('settings');
-    if (page === 'clients') return GT.can('read', 'clients') || GT.can('read', 'enquiries');
-    return GT.can('read', PAGE_COL[page]);
+    if (page === 'account' || page === 'settings') return true;
+    if (page === 'clients') return GT.hasSection('clients') || GT.hasSection('enquiries');
+    return !!PAGE_COL[page] && GT.hasSection(PAGE_COL[page]);
   }
   // create = { label, act }: a compact "New …" button in the header on desktop
   // (phones get the full-width bottom bar from fab() instead)
   function head(title, create) {
-    const u = GT.user || {};
     const newBtn = create && !(colOfAct(create.act) && !GT.can('write', colOfAct(create.act)))
       ? `<button class="pill-btn solid head-new" data-act="${create.act}">${ic('plus')}${esc(create.label.charAt(0) + create.label.slice(1).toLowerCase())}</button>` : '';
-    return `<div class="page-head"><h1>${esc(title)}</h1><div class="head-tools">${newBtn}<button class="round" data-act="search" aria-label="Search">${ic('search')}</button><button class="staff-pill" data-act="me" title="${esc(u.name)} — ${esc(GT.roleLabel(u.role))}">${ic('star', 'i" style="width:15px;height:15px')}${esc(GT.roleLabel(u.role).toUpperCase())}</button></div></div>`;
+    return `<div class="page-head"><h1>${esc(title)}</h1><div class="head-tools">${newBtn}<button class="round" data-act="search" aria-label="Search">${ic('search')}</button></div></div>`;
   }
   const FAB_COL = { 'new-invoices': 'invoices', 'new-quotations': 'quotations', 'add-clients': 'clients', 'add-vendors': 'vendors', 'add-procurement': 'procurement', 'add-expenses': 'expenses', 'add-payments': 'payments', 'run-payroll': 'payroll' };
   const colOfAct = (act) => FAB_COL[act] || (/^add-/.test(act) && act !== 'add-staff' ? act.slice(4) : null);
@@ -203,7 +202,7 @@
     const reqs = db.all('quotations').filter((q) => q.status === 'Request');
     const enq = db.all('enquiries').filter((e) => e.status === 'New');
     main.innerHTML = `<div class="page">${head('Business overview')}
-      ${GT.pendingAdmins ? `<a class="notice" href="#/settings"><b>${GT.pendingAdmins} admin request${GT.pendingAdmins > 1 ? 's' : ''} waiting for your approval</b><span>Review →</span></a>` : ''}
+      ${GT.pendingAdmins ? `<a class="notice" href="#/account/admins"><b>${GT.pendingAdmins} admin request${GT.pendingAdmins > 1 ? 's' : ''} waiting for your approval</b><span>Review →</span></a>` : ''}
       <div class="kpis">
         <div class="kpi accent"><small>Collected in ${MONTHS[now.getMonth()]}</small><b class="tnum">${moneyShort(collected)}</b><span>from ${db.all('payments').filter((p) => p.date.startsWith(ym)).length} payment(s)</span></div>
         <div class="kpi"><small>Outstanding receivables</small><b class="tnum">${moneyShort(outstanding)}</b><span style="color:${overdue.length ? 'var(--red)' : ''}">${overdue.length} overdue invoice(s)</span></div>
@@ -493,9 +492,9 @@
   let clientTab = 'clients';
   PAGES.clients = function () {
     const nNew = db.all('enquiries').filter((e) => e.status === 'New').length;
-    if (!GT.can('read', 'clients')) clientTab = 'enquiries';
-    if (!GT.can('read', 'enquiries')) clientTab = 'clients';
-    const tabs = !(GT.can('read', 'clients') && GT.can('read', 'enquiries')) ? '' : `<div class="seg tabs"><button data-ctab="clients" class="${clientTab === 'clients' ? 'on' : ''}">Clients</button><button data-ctab="enquiries" class="${clientTab === 'enquiries' ? 'on' : ''}">Enquiries${nNew ? ` (${nNew})` : ''}</button></div>`;
+    if (!GT.hasSection('clients')) clientTab = 'enquiries';
+    if (!GT.hasSection('enquiries')) clientTab = 'clients';
+    const tabs = !(GT.hasSection('clients') && GT.hasSection('enquiries')) ? '' : `<div class="seg tabs"><button data-ctab="clients" class="${clientTab === 'clients' ? 'on' : ''}">Clients</button><button data-ctab="enquiries" class="${clientTab === 'enquiries' ? 'on' : ''}">Enquiries${nNew ? ` (${nNew})` : ''}</button></div>`;
     if (clientTab === 'enquiries') return tablePage({ key: 'enq', title: 'Clients', col: 'enquiries', tabs, columns: [
       { label: 'Date', get: (r) => fmtD(r.date) }, { label: 'Name', get: (r) => r.name }, { label: 'Subject', get: (r) => r.subject || r.message.slice(0, 50) }, { label: 'Email', get: (r) => r.email }, { label: 'Status', get: (r) => chip(r.status), html: true }] });
     tablePage({ key: 'cl', title: 'Clients', col: 'clients', tabs, addLabel: 'ADD CLIENT', columns: [
@@ -581,35 +580,107 @@
       </div></div>`;
   };
 
-  /* ================= SETTINGS ================= */
-  PAGES.settings = function () {
+  /* ================= ACCOUNT ================= */
+  // One page for everyone. It shows the account type, then the settings that type can use:
+  // head admin → Profile & security, Business settings, Admins; admin → Profile & security, My access.
+  P.account = '<circle cx="12" cy="7.8" r="4.3" fill="currentColor"/><path d="M3.4 21.2c.7-4.4 4.1-7.1 8.6-7.1s7.9 2.7 8.6 7.1z" fill="currentColor"/>';
+  let aTab = 'profile';
+  PAGES.settings = () => location.replace('#/account');
+  PAGES.account = function () {
+    const sub = location.hash.split('/')[2];
+    if (sub) aTab = sub;
+    const u = GT.user || {}, isHead = GT.can('settings');
+    const tabs = isHead
+      ? [['profile', 'Profile & security'], ['business', 'Business settings'], ['admins', `Admins${GT.pendingAdmins ? ` (${GT.pendingAdmins})` : ''}`]]
+      : [['profile', 'Profile & security'], ['access', 'My access']];
+    if (!tabs.some(([k]) => k === aTab)) aTab = 'profile';
+    const initials = (u.name || u.email || '?').trim().split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+    main.innerHTML = `<div class="page">${head('Account')}
+      <section class="acct-hero">
+        <div class="acct-avatar" aria-hidden="true">${esc(initials)}</div>
+        <div class="acct-id"><h2>${esc(u.name || 'Your account')}</h2><p>${esc(u.email || '')}</p></div>
+        <div class="acct-type"><span class="acct-badge${isHead ? ' head' : ''}">${ic(isHead ? 'star' : 'account')}${esc(GT.roleLabel(u.role))}</span>
+          <small>${isHead ? 'Full access to every section. You approve new admins, decide what each one can use, and manage business settings.' : 'Your access is set by the head admin. The sections you can use are listed under My access.'}</small></div>
+      </section>
+      <div class="seg acct-tabs" role="tablist" aria-label="Account sections">${tabs.map(([k, l]) => `<button role="tab" aria-selected="${aTab === k}" data-atab="${k}" class="${aTab === k ? 'on' : ''}">${esc(l)}</button>`).join('')}</div>
+      <div id="acctBody" role="tabpanel"></div></div>`;
+    const body = $('#acctBody');
+    if (aTab === 'profile') { body.innerHTML = profileHTML(u, isHead); bindProfile(u, isHead); }
+    if (aTab === 'business') { body.innerHTML = businessHTML(); bindBusiness(); }
+    if (aTab === 'admins') { body.innerHTML = adminsHTML(); loadStaff(); }
+    if (aTab === 'access') body.innerHTML = myAccessHTML(u);
+  };
+
+  const roField = (label, value) => `<label class="fld">${esc(label)}<input value="${esc(value)}" readonly tabindex="-1"></label>`;
+  function profileHTML(u, isHead) {
+    return `<div class="grid2 acct-grid">
+      <form class="panel" id="profForm" novalidate><h3>Profile</h3>
+        ${isHead ? field({ name: 'name', label: 'Name', required: true }, u.name) : roField('Name', u.name || '—')}
+        ${roField('Email (used to sign in)', u.email || '')}
+        ${roField('Account type', GT.roleLabel(u.role))}
+        ${isHead ? '<div class="modal-foot"><button class="pill-btn solid" type="submit">Save profile</button></div>' : '<p class="page-sub" style="margin:4px 0 0">To change your name, ask the head admin.</p>'}
+      </form>
+      <form class="panel" id="pwForm" novalidate><h3>Password &amp; sign-in</h3>
+        ${field({ name: 'current', label: 'Current password', type: 'password', required: true })}
+        ${field({ name: 'password', label: 'New password (at least 8 characters)', type: 'password', required: true })}
+        ${field({ name: 'confirm', label: 'Confirm new password', type: 'password', required: true })}
+        <div class="modal-foot"><button type="button" class="ghost danger left" data-signout>Sign out</button><button class="pill-btn solid" type="submit">Change password</button></div>
+      </form></div>`;
+  }
+  function bindProfile(u, isHead) {
+    $('#pwForm [name=current]').setAttribute('autocomplete', 'current-password');
+    ['password', 'confirm'].forEach((n) => $(`#pwForm [name=${n}]`).setAttribute('autocomplete', 'new-password'));
+    $('[data-signout]').addEventListener('click', async () => { await GT.db.flush(); await GT.auth.signOut(); location.hash = ''; location.reload(); });
+    $('#pwForm').addEventListener('submit', async (e) => {
+      e.preventDefault(); const d = Object.fromEntries(new FormData(e.target));
+      if (!d.current || !d.password) return toast('Fill in your current and new password');
+      if (d.password !== d.confirm) return toast("The new passwords don't match");
+      try { await GT.auth.changePassword(d.current, d.password); e.target.reset(); toast('Password changed'); } catch (err) { toast(err.message); }
+    });
+    if (isHead) $('#profForm').addEventListener('submit', async (e) => {
+      e.preventDefault(); const name = new FormData(e.target).get('name').trim();
+      if (!name) return toast('Enter your name');
+      try { await GT.staff.update(u.id, { name }); await GT.load(); toast('Profile saved'); route(); } catch (err) { toast(err.message); }
+    });
+  }
+
+  function businessHTML() {
     const s = db.settings();
-    main.innerHTML = `<div class="page">${head('Admins & settings')}
-      <div class="grid2">
-        <form class="panel" id="setForm"><h3>Business &amp; invoicing</h3>
-          <div class="fld-row">${field({ name: 'currency', label: 'Currency', type: 'select', options: [['NGN', 'NGN — Naira (₦)'], ['USD', 'USD — US dollar ($)'], ['GBP', 'GBP — Pound (£)'], ['EUR', 'EUR — Euro (€)']] }, s.currency)}${field({ name: 'taxRate', label: 'Default VAT %', type: 'number', step: 'any' }, s.taxRate)}</div>
-          <div class="fld-row">${field({ name: 'invoicePrefix', label: 'Invoice prefix' }, s.invoicePrefix)}${field({ name: 'quotePrefix', label: 'Quotation prefix' }, s.quotePrefix)}</div>
-          ${field({ name: 'bankName', label: 'Bank name' }, s.bank.name)}
-          <div class="fld-row">${field({ name: 'bankAccount', label: 'Account name' }, s.bank.account)}${field({ name: 'bankNumber', label: 'Account number' }, s.bank.number)}</div>
-          ${field({ name: 'defaultNotes', label: 'Default invoice notes', type: 'textarea', rows: 2 }, s.defaultNotes)}
-          <div class="fld-row">${field({ name: 'openingCash', label: 'Starting cash balance (Cash flow)', type: 'number', step: 'any' }, s.openingCash || 0)}${field({ name: 'payrollDeductionPct', label: 'Payroll deductions % (PAYE + pension)', type: 'number', step: 'any' }, s.payrollDeductionPct ?? 10)}</div>
-          <div class="modal-foot"><button class="pill-btn solid" type="submit">Save settings</button></div>
-        </form>
-        <div>
-          <div class="panel" style="margin-bottom:16px"><h3>Admins <a href="#" data-act="add-staff">How to add admins</a></h3>
-            <div id="staffList"><p style="color:var(--muted);font-size:14px">Loading…</p></div>
-            <p style="font-size:12.5px;color:var(--muted);margin-top:12px">You are the head admin: only you approve new admins and decide which sections each one can view or edit. The database enforces these limits, not just the menu.<br><br>To add someone, send them the admin link and ask them to choose <b>Request admin access</b>. Once they confirm their email they appear here with a <b>Review</b> button.</p></div>
-          <div class="panel"><h3>Company</h3>
-            <div style="font-size:14px;line-height:1.6"><b>${esc(COMPANY.name)}</b><br>${COMPANY.headOffice.map(esc).join(', ')}<br>USA: ${COMPANY.usOffice.join(', ')} · ${COMPANY.usPhone}<br>${COMPANY.phones.join(' · ')}<br>${COMPANY.email}</div>
-            <div class="modal-foot" style="margin-top:16px"><button class="ghost danger left" data-act="clear-data">Delete all records</button><button class="ghost" data-act="load-demo">Load demo data</button></div></div>
-        </div>
-      </div></div>`;
+    return `<div class="grid2 acct-grid">
+      <form class="panel" id="setForm"><h3>Business &amp; invoicing</h3>
+        <div class="fld-row">${field({ name: 'currency', label: 'Currency', type: 'select', options: [['NGN', 'NGN — Naira (₦)'], ['USD', 'USD — US dollar ($)'], ['GBP', 'GBP — Pound (£)'], ['EUR', 'EUR — Euro (€)']] }, s.currency)}${field({ name: 'taxRate', label: 'Default VAT %', type: 'number', step: 'any' }, s.taxRate)}</div>
+        <div class="fld-row">${field({ name: 'invoicePrefix', label: 'Invoice prefix' }, s.invoicePrefix)}${field({ name: 'quotePrefix', label: 'Quotation prefix' }, s.quotePrefix)}</div>
+        ${field({ name: 'bankName', label: 'Bank name' }, s.bank.name)}
+        <div class="fld-row">${field({ name: 'bankAccount', label: 'Account name' }, s.bank.account)}${field({ name: 'bankNumber', label: 'Account number' }, s.bank.number)}</div>
+        ${field({ name: 'defaultNotes', label: 'Default invoice notes', type: 'textarea', rows: 2 }, s.defaultNotes)}
+        <div class="fld-row">${field({ name: 'openingCash', label: 'Starting cash balance (Cash flow)', type: 'number', step: 'any' }, s.openingCash || 0)}${field({ name: 'payrollDeductionPct', label: 'Payroll deductions % (PAYE + pension)', type: 'number', step: 'any' }, s.payrollDeductionPct ?? 10)}</div>
+        <div class="modal-foot"><button class="pill-btn solid" type="submit">Save settings</button></div>
+      </form>
+      <div class="panel"><h3>Company</h3>
+        <div style="font-size:14px;line-height:1.6"><b>${esc(COMPANY.name)}</b><br>${COMPANY.headOffice.map(esc).join(', ')}<br>USA: ${COMPANY.usOffice.join(', ')} · ${COMPANY.usPhone}<br>${COMPANY.phones.join(' · ')}<br>${COMPANY.email}</div>
+        <h3 style="margin-top:22px">Data</h3>
+        <p class="page-sub" style="margin:0 0 4px">Load sample records to explore, or clear every business record. Admin accounts and settings are kept either way.</p>
+        <div class="modal-foot" style="margin-top:12px"><button class="ghost danger left" data-act="clear-data">Delete all records</button><button class="ghost" data-act="load-demo">Load demo data</button></div></div>
+    </div>`;
+  }
+  function bindBusiness() {
     $('#setForm').addEventListener('submit', (e) => {
       e.preventDefault(); const d = Object.fromEntries(new FormData(e.target));
       db.saveSettings({ currency: d.currency, taxRate: Number(d.taxRate) || 0, invoicePrefix: d.invoicePrefix, quotePrefix: d.quotePrefix, defaultNotes: d.defaultNotes, openingCash: Number(d.openingCash) || 0, payrollDeductionPct: Number(d.payrollDeductionPct) || 0, bank: { name: d.bankName, account: d.bankAccount, number: d.bankNumber } }).then(() => toast('Settings saved'));
     });
-    loadStaff();
-  };
+  }
+  function adminsHTML() {
+    return `<div class="panel"><h3>Admins <a href="#" data-act="add-staff">How to add admins</a></h3>
+      <div id="staffList"><p style="color:var(--muted);font-size:14px">Loading…</p></div>
+      <p style="font-size:12.5px;color:var(--muted);margin-top:12px">Only you approve new admins and decide which sections each one can view or edit. The database enforces these limits, not just the menu. To add someone, send them the admin link and ask them to choose <b>Request admin access</b>. Once they confirm their email they appear here with a <b>Review</b> button.</p></div>`;
+  }
+  function myAccessHTML(u) {
+    const a = u.access || {};
+    const rows = GT.SECTIONS.map((k) => { const l = a[k] || 'none'; return `<div class="acc-row"><span>${esc(SECTION_LABELS[k] || k)}</span>${l === 'edit' ? chip('Paid', 'Can edit') : l === 'view' ? chip('Ordered', 'View only') : chip('Draft', 'No access')}</div>`; }).join('');
+    return `<div class="panel"><h3>What you can use</h3><div class="acc-grid">${rows}</div>
+      <p class="page-sub" style="margin:12px 0 0">Sections you can view may also show related names (for example client names on deliveries). To change your access, ask the head admin.</p></div>`;
+  }
+
   let STAFF = [];
   const SECTION_LABELS = { clients: 'Clients', enquiries: 'Website enquiries', deals: 'Pipeline', quotations: 'Quotations', invoices: 'Invoices', returns: 'Returns & credit notes', payments: 'Payments',
     procurement: 'Procurement', vendors: 'Vendors', warehouses: 'Warehouses', stock: 'Stock & batches', transfers: 'Transfers', deliveries: 'Deliveries', drivers: 'Drivers & routes',
@@ -641,7 +712,7 @@
       <div>${esc(m.name || m.email)}${m.id === GT.user.id ? ' <small style="display:inline">(you)</small>' : ''}<small>${esc(m.email)} · ${esc(accessSummary(m))}</small></div>
       ${m.role === 'Pending' ? '<span class="pill-btn solid sm">Review</span>' : chip(CH[m.role] || 'Draft', GT.roleLabel(m.role))}</div>`).join('');
     const n = STAFF.filter((m) => m.role === 'Pending').length;
-    if (n !== GT.pendingAdmins) { await GT.load().catch(() => {}); renderNav('settings'); }
+    if (n !== GT.pendingAdmins) { await GT.load().catch(() => {}); renderNav('account'); }
   }
   function staffForm(id) {
     if (!id) {
@@ -700,18 +771,6 @@
       loadStaff();
     });
   }
-  function meMenu() {
-    const u = GT.user;
-    const m = modal('Your account', `<p style="font-size:14px;margin-bottom:16px"><b>${esc(u.name)}</b><br><span style="color:var(--muted)">${esc(u.email)} · ${esc(GT.roleLabel(u.role))}</span></p>
-      <form novalidate>${field({ name: 'current', label: 'Current password', type: 'password' })}${field({ name: 'password', label: 'New password (at least 8 characters)', type: 'password' })}
-      <div class="modal-foot"><button type="button" class="ghost danger left" data-signout>Sign out</button><button class="pill-btn solid" type="submit">Change password</button></div></form>`);
-    $('[data-signout]', m).addEventListener('click', async () => { await GT.db.flush(); await GT.auth.signOut(); location.hash = ''; location.reload(); });
-    $('form', m).addEventListener('submit', async (e) => {
-      e.preventDefault(); const d = Object.fromEntries(new FormData(e.target));
-      try { await GT.auth.changePassword(d.current, d.password); closeModal(); toast('Password changed'); } catch (err) { toast(err.message); }
-    });
-  }
-
   function searchModal() {
     const m = modal('Search', `<div class="search" style="background:#f4f4f7;margin-bottom:10px">${ic('search')}<input data-q placeholder="Clients, invoice numbers, quotations…"></div><div class="pick-list" data-res></div>`);
     const res = $('[data-res]', m);
@@ -1029,7 +1088,7 @@
     }
     const max = Math.max(1, ...weeks.map((w) => Math.max(w.cin, w.cout)));
     main.innerHTML = `<div class="page">${head('Cash flow')}${subhead(`${MONTHS[now.getMonth()]} to date. Cash in is payments received; cash out is expenses (including paid payroll).`)}
-      ${!opening0 && GT.can('settings') ? '<a class="notice" href="#/settings"><b>Set your starting cash balance for accurate balances</b><span>Settings →</span></a>' : ''}
+      ${!opening0 && GT.can('settings') ? '<a class="notice" href="#/account/business"><b>Set your starting cash balance for accurate balances</b><span>Settings →</span></a>' : ''}
       ${kpiRow([['Opening balance', moneyShort(openM), `1 ${MONTHS[now.getMonth()]}`], ['Cash in', moneyShort(cin)], ['Cash out', moneyShort(cout)], ['Closing balance', moneyShort(openM + cin - cout), 'today', true]])}
       <div class="panel"><h3>Weekly cash in vs cash out <span class="legend"><span><i style="background:var(--orange)"></i>Cash in</span><span><i style="background:#3b3b44"></i>Cash out</span></span></h3>
         <div class="chart">${weeks.map((w) => `<div class="col"><div class="bars"><div class="bar rev" style="height:${(w.cin / max) * 100}%" data-v="${moneyShort(w.cin)}"></div><div class="bar exp" style="height:${(w.cout / max) * 100}%" data-v="${moneyShort(w.cout)}"></div></div></div>`).join('')}</div>
@@ -1164,6 +1223,7 @@
   /* ================= EVENTS ================= */
   main.addEventListener('click', (e) => {
     if (moduleClick(e)) return;
+    const at = e.target.closest('[data-atab]'); if (at) { location.hash = '#/account/' + at.dataset.atab; return; }
     const go = e.target.closest('[data-go]'); if (go) { location.hash = go.dataset.go; return; }
     const enq = e.target.closest('[data-enq]'); if (enq) return enquiryModal(enq.dataset.enq);
     const ed = e.target.closest('[data-edit]'); if (ed) { const [c, id] = ed.dataset.edit.split(':'); return editRecord(c, id); }
@@ -1185,7 +1245,7 @@
       case 'pay': return paymentForm({});
       case 'exp': return editRecord('expenses');
       case 'add-staff': e.preventDefault(); return staffForm();
-      case 'me': return meMenu();
+      case 'me': location.hash = '#/account'; return;
       case 'load-demo': case 'clear-data': {
         const clear = act === 'clear-data';
         if (!confirm(clear ? 'Delete ALL clients, invoices, quotations, payments and other records? Staff accounts and settings are kept. This cannot be undone.' : 'Replace all records with the demo data? Everything currently entered will be removed.')) return;
@@ -1344,7 +1404,7 @@
 
   async function start() {
     const c = await GT.load();
-    if (!['Owner', 'Procurement', 'Finance'].includes(c.user.role)) return waitingScreen(c.user);
+    if (!['Owner', 'Staff', 'Procurement', 'Finance'].includes(c.user.role)) return waitingScreen(c.user);
     document.body.classList.remove('auth-mode', 'booting');
     booted = true;
     if (!location.hash || location.hash === '#') history.replaceState(null, '', '#/overview');
