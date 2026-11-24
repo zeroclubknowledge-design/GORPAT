@@ -45,7 +45,7 @@ The admin sidebar is grouped into:
 - **HR & payroll**: Staff, Attendance (daily marking), Payroll (monthly runs; marking a run as paid logs a salary expense)
 - **Admin**: Admins & settings (approvals, per-section access, business settings, starting cash balance, payroll deduction %)
 
-Run  in the SQL Editor (after 002) to enable these modules. Every module is a section in the access editor (No access / View / Edit).
+Run `supabase/003_operations_modules.sql` in the SQL Editor (after 002) to enable these modules. Every module is a section in the access editor (No access / View / Edit).
 
 ## How the website and admin connect
 
