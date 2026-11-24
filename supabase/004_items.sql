@@ -1,0 +1,405 @@
+-- =====================================================================
+-- Gorpat — migration 004: Items catalogue
+-- Run AFTER 003_operations_modules.sql, once, in Supabase → SQL Editor. Safe to re-run:
+-- items that already exist are left untouched (nothing is duplicated).
+--
+-- 1. adds the "items" record type and access section
+-- 2. registers 314 aluminium profiles from QUANTITY TABLE.xlsx
+-- =====================================================================
+
+-- allow the new record type
+alter table public.records drop constraint if exists records_col_check;
+alter table public.records add constraint records_col_check check (col in (
+  'clients','vendors','invoices','quotations','procurement','payments','expenses','enquiries',
+  'deals','returns','credit_notes','warehouses','stock','transfers','deliveries','drivers',
+  'cost_ledger','employees','attendance','payroll','items'));
+
+-- items can be read by anyone who builds quotes, invoices, orders or stock
+create or replace function public.can_read(c text) returns boolean
+language plpgsql stable security definer set search_path = public as $$
+declare r text; a jsonb;
+begin
+  select role, access into r, a from public.staff where id = auth.uid();
+  if r = 'Owner' then return true; end if;
+  if r is distinct from 'Staff' then return false; end if;
+  return public._lvl(a, public._sec(c)) >= 1
+    or (c = 'clients' and greatest(public._lvl(a,'invoices'), public._lvl(a,'quotations'), public._lvl(a,'procurement'),
+                                   public._lvl(a,'payments'), public._lvl(a,'returns'), public._lvl(a,'deliveries'), public._lvl(a,'deals')) >= 1)
+    or (c = 'vendors' and greatest(public._lvl(a,'procurement'), public._lvl(a,'expenses'), public._lvl(a,'stock'), public._lvl(a,'cost_ledger')) >= 1)
+    or (c in ('invoices', 'credit_notes') and greatest(public._lvl(a,'invoices'), public._lvl(a,'payments'), public._lvl(a,'reports'),
+                                                     public._lvl(a,'returns'), public._lvl(a,'deliveries')) >= 1)
+    or (c in ('payments', 'expenses', 'procurement', 'payroll') and public._lvl(a,'reports') >= 1)
+    or (c = 'warehouses' and greatest(public._lvl(a,'stock'), public._lvl(a,'transfers')) >= 1)
+    or (c = 'stock' and public._lvl(a,'warehouses') >= 1)
+    or (c = 'drivers' and public._lvl(a,'deliveries') >= 1)
+    or (c = 'employees' and greatest(public._lvl(a,'attendance'), public._lvl(a,'payroll')) >= 1)
+    or (c = 'items' and greatest(public._lvl(a,'quotations'), public._lvl(a,'invoices'), public._lvl(a,'procurement'),
+                                 public._lvl(a,'stock'), public._lvl(a,'transfers')) >= 1);
+end $$;
+
+-- accept "items" in each admin's access map
+create or replace function public.staff_guard() returns trigger
+language plpgsql set search_path = public as $$
+begin
+  if tg_op = 'UPDATE' then
+    new.id := old.id; new.created_at := old.created_at;
+    if current_user in ('anon', 'authenticated') then
+      new.email := old.email;
+      if old.role = 'Owner' and new.role <> 'Owner' then
+        raise exception 'The head admin role can only be transferred with make_head_admin() in the SQL Editor' using errcode = 'P0001';
+      end if;
+      if new.role = 'Owner' and old.role <> 'Owner' then
+        raise exception 'There can only be one head admin' using errcode = 'P0001';
+      end if;
+    end if;
+    new.access := coalesce((
+      select jsonb_object_agg(k, v) from jsonb_each_text(coalesce(new.access, '{}'::jsonb)) as e(k, v)
+      where k in ('clients','enquiries','deals','quotations','invoices','returns','payments','procurement','vendors',
+                  'warehouses','stock','transfers','deliveries','drivers','expenses','cost_ledger','reports',
+                  'employees','attendance','payroll','items')
+        and v in ('none','view','edit')), '{}'::jsonb);
+  end if;
+  return new;
+end $$;
+
+-- register the catalogue (id is derived from code + gauge + length + name, so re-running adds nothing twice)
+insert into public.records (col, id, data, created_by, updated_by)
+select 'items',
+       'it_' || substr(md5(v.code || '|' || coalesce(v.gauge::text, '') || '|' || coalesce(v.len::text, '') || '|' || v.name || '|' || coalesce(v.wt::text, '')), 1, 20),
+       jsonb_strip_nulls(jsonb_build_object(
+         'code', v.code, 'brand', v.brand, 'gauge', v.gauge, 'name', v.name, 'length', v.len,
+         'weight', v.wt, 'pcsPerTon', v.pct, 'category', v.cat, 'unit', 'pc', 'active', true,
+         'source', 'QUANTITY TABLE.xlsx row ' || v.src)),
+       null, null
+from (values
+  ('RT-NY35', 'RT', 0.6, 'top rail', 5.85, 1.46, 685, 'Rails, lock stiles & interlocks', 4),
+  ('RT-NY38', 'RT', 0.6, 'bottom rail', 5.85, 1.473, 679, 'Rails, lock stiles & interlocks', 5),
+  ('RT-NY47', 'RT', 0.6, 'lock style', 5.85, 1.481, 675, 'Rails, lock stiles & interlocks', 6),
+  ('RT-NY48', 'RT', 0.6, 'inter lock', 5.85, 1.471, 680, 'Rails, lock stiles & interlocks', 7),
+  ('RT-F1028', 'RT', 0.5, 'top divider S', 5.85, 0.878, 1139, 'Covers, channels & dividers', 8),
+  ('RT-1046-0.7', 'RT', 0.7, 'infil tube', 5.85, 1.264, 791, 'Infill', 9),
+  ('RT-1046-0.6', 'RT', 0.6, 'infil tube', 5.85, 1.08814, 919, 'Infill', 10),
+  ('RT-1125', 'RT', 0.6, 'net track S bottom', 6, 1.17, 855, 'Net & mosquito', 11),
+  ('RT-1126', 'RT', 0.6, 'net track S top', 6, 0.924, 1082, 'Net & mosquito', 12),
+  ('RT-1125A', 'RT', 0.6, 'net track S bottom', 6, 1.218, 821, 'Net & mosquito', 13),
+  ('RT-1126A', 'RT', 0.6, 'net track S top', 6, 0.978, 1022, 'Net & mosquito', 14),
+  ('RT-NC1132', 'RT', 0.5, 'net inner bead', 5.85, 0.513, 1950, 'Net & mosquito', 15),
+  ('RT-2306-0.6', 'RT', 0.6, 'big round infil', 6, 1.2, 833, 'Infill', 16),
+  ('RT-2306A-0.6', 'RT', 0.6, 'big round infil', 6, 1.17, 855, 'Infill', 17),
+  ('RT-2306B-0.6', 'RT', 0.6, 'medium round infil', 6, 1.026, 975, 'Infill', 18),
+  ('RT-2306C-0.6', 'RT', 0.6, 'small round infil', 6, 0.978, 1022, 'Infill', 19),
+  ('TRT-2306', 'TRT', 0.75, 'big round infil', 6, 1.488, 672, 'Infill', 20),
+  ('TRT-2306A', 'TRT', 0.75, 'big round infil', 6, 1.452, 689, 'Infill', 21),
+  ('TRT-2306B', 'TRT', 0.75, 'medium round infil', 6, 1.282, 780, 'Infill', 22),
+  ('TRT-2306C', 'TRT', 0.75, 'small round infil', 6, 1.22, 820, 'Infill', 23),
+  ('RT-3465', 'RT', 0.6, 'big divider', 5.85, 1.58, 633, 'Covers, channels & dividers', 24),
+  ('RT-M5001', 'RT', 0.6, 'double track', 6, 1.986, 504, 'Tracks & jambs', 25),
+  ('RT-N5001', 'RT', 0.6, 'double track', 6, 2.19, 457, 'Tracks & jambs', 26),
+  ('RT-N5002', 'RT', 0.6, 'single track', 6, 0.906, 1104, 'Tracks & jambs', 27),
+  ('RT-N5003', 'RT', 0.6, 'single side jamb', 6, 0.996, 1004, 'Tracks & jambs', 28),
+  ('RT-N5021', 'RT', 0.6, 'projected outer', 5.85, 1.246, 803, 'Casement, projected & 99 series', 29),
+  ('RT-5024', 'RT', 0.5, 'projected bead', 5.85, 0.503, 1988, 'Beads', 30),
+  ('RT-N5033', 'RT', 0.6, 'double side jamb', 6, 1.466, 682, 'Tracks & jambs', 31),
+  ('RT-M5035', 'RT', 0.6, 'tripple track', 6, 2.808, 356, 'Tracks & jambs', 32),
+  ('RT-N5035', 'RT', 0.6, 'tripple track', 6, 3.048, 328, 'Tracks & jambs', 33),
+  ('RT-5052', 'RT', 0.5, 'projected bead', 5.85, 0.649, 1541, 'Beads', 34),
+  ('RT-1059', 'RT', 0.6, '40*40 bead', 6, 0.626, 1598, 'Beads', 35),
+  ('RT-1873', 'RT', 0.7, '99 stopper', 6, 3.06, 327, 'Casement, projected & 99 series', 36),
+  ('RT-2055', 'RT', 0.7, 'projected mullion', 6, 2.066, 484, 'Mullions & transoms', 37),
+  ('RT-5303', 'RT', 0.6, 'casement net track bottom', 5.85, 2.387, 419, 'Net & mosquito', 38),
+  ('RT-5304', 'RT', 0.6, 'casement net track top', 5.85, 2.299, 435, 'Net & mosquito', 39),
+  ('RT-3885', 'RT', 0.7, 'special inner', 5.85, 1.931, 518, 'Casement, projected & 99 series', 40),
+  ('RT-3885A', 'RT', 0.7, 'casement 99 big', 5.85, 2.506, 399, 'Casement, projected & 99 series', 41),
+  ('RT-3687', 'RT', 0.7, 'special outer', 6, 1.45, 690, 'Casement, projected & 99 series', 42),
+  ('RT-4818', 'RT', 0.7, 'double mullion', 5.85, 2.976, 336, 'Mullions & transoms', 43),
+  ('RT-4851', 'RT', 0.7, 'decuv', 5.85, 2.762, 362, 'Casement, projected & 99 series', 44),
+  ('RT-4851A', 'RT', 0.7, 'decuv curve', 5.85, 2.762, 362, 'Casement, projected & 99 series', 45),
+  ('RT-4853', 'RT', 0.7, 'small 99 casement mullion', 5.85, 2.342, 427, 'Mullions & transoms', 46),
+  ('RT-4848', 'RT', 0.7, 'width', 5.85, 2.088, 479, 'Casement, projected & 99 series', 47),
+  ('RT-4849', 'RT', 0.7, 'height', 5.85, 2.049, 488, 'Casement, projected & 99 series', 48),
+  ('RT-6006', 'RT', 0.7, 'tripple mullion', 5.85, 3.13, 320, 'Mullions & transoms', 49),
+  ('RT-8887', 'RT', 0.7, 'small 99', 5.85, 2.205, 454, 'Casement, projected & 99 series', 50),
+  ('RT-11227', 'RT', 0.6, '98 bead LONG', 5.85, 0.69, 1449, 'Beads', 51),
+  ('RT-11228', 'RT', 0.6, '99 bead SHORT', 5.85, 0.626, 1597, 'Beads', 52),
+  ('RT-NY31', 'RT', 0.6, 'shine bead', 5.85, 0.766, 1305, 'Beads', 53),
+  ('RT-NY43', 'RT', 0.7, 'big 99 with vain', 5.85, 2.615, 382, 'Casement, projected & 99 series', 54),
+  ('RT-2301', 'RT', 0.7, '40/40 tube', 6, 1.727, 579, 'Tubes & pipes', 55),
+  ('RT-2305', 'RT', 0.7, '95 mullion', 6, 2.776, 362, 'Mullions & transoms', 56),
+  ('RT-2308', 'RT', 0.7, '96 cover', 6, 1.476, 678, 'Covers, channels & dividers', 57),
+  ('TRT-2299', 'TRT', 0.8, '40/80 tube', 6, 3.072, 325, 'Tubes & pipes', 58),
+  ('RT-3302', 'RT', 0.7, 'sun breaker', 6, 1.038, 963, 'Covers, channels & dividers', 59),
+  ('RT-4024', 'RT', 0.7, 'u channel', 6, 1.11, 901, 'Covers, channels & dividers', 60),
+  ('RT-4852', 'RT', 0.7, 'RT-2000', 6, 2.79, 358, 'Casement, projected & 99 series', 61),
+  ('RT-5039', 'RT', 0.7, 'lock stool', 6, 2.718, 368, 'Rails, lock stiles & interlocks', 62),
+  ('RT-5092', 'RT', 0.7, '45/100 tube', 6, 3.258, 307, 'Tubes & pipes', 63),
+  ('RT-6005', 'RT', 0.7, 'small 99 vain', 6, 2.364, 423, 'Casement, projected & 99 series', 64),
+  ('RT-20395', 'RT', 0.7, '96 mullion', 6, 3.306, 302, 'Mullions & transoms', 65),
+  ('RT-40*40CT', 'RT', 0.7, '40/80 core', 6, 1.626, 615, 'Tubes & pipes', 66),
+  ('RT-40*40CB', 'RT', 0.6, '40/80 core bead', 6, 0.486, 2058, 'Beads', 67),
+  ('RT-4816', 'RT', 0.7, 'top cover', 6, 1.992, 502, 'Covers, channels & dividers', 68),
+  ('RT-3421', 'RT', 0.7, 'big mullion with vain', 6, 2.748, 364, 'Mullions & transoms', 69),
+  ('SK-M5001', 'SK', 1, 'double track', 6, 3.312, 302, 'Tracks & jambs', 71),
+  ('SK-N5001', 'SK', 1, 'double track(used currently)', 6, 3.636, 275, 'Tracks & jambs', 72),
+  ('SK-M5035', 'SK', 1, 'tripple track', 6, 4.686, 213, 'Tracks & jambs', 73),
+  ('SK-N5035', 'SK', 1, 'tripple track(used currently)', 6, 5.076, 197, 'Tracks & jambs', 74),
+  ('SK-N5033', 'SK', 1, 'double side jamb', 6, 2.58, 388, 'Tracks & jambs', 75),
+  ('SK-NY35', 'SK', 1, 'top rail', 6, 2.742, 365, 'Rails, lock stiles & interlocks', 76),
+  ('SK-NY38', 'SK', 1, 'bottom rail', 6, 2.97, 337, 'Rails, lock stiles & interlocks', 77),
+  ('SK-NY47', 'SK', 1, 'lock style', 6, 2.862, 349, 'Rails, lock stiles & interlocks', 78),
+  ('SK-NY48', 'SK', 1, 'inter lock', 6, 2.646, 378, 'Rails, lock stiles & interlocks', 79),
+  ('SK-N5002', 'SK', 1, 'single track', 6, 1.512, 661, 'Tracks & jambs', 80),
+  ('SK-N5003', 'SK', 1, 'single side jamb', 6, 1.662, 602, 'Tracks & jambs', 81),
+  ('SK-3465', 'SK', 1, 'big divider', 6, 2.706, 370, 'Covers, channels & dividers', 82),
+  ('SK-F1028', 'SK', 1, 'top devider S', 6, 1.818, 550, 'Covers, channels & dividers', 83),
+  ('SK-NC1132', 'SK', 1, 'net inner bead', 6, 1.134, 882, 'Net & mosquito', 84),
+  ('SK-1125', 'SK', 1, 'net track S bottom', 6, 1.95, 513, 'Net & mosquito', 85),
+  ('SK-1125A', 'SK', 1, 'net track S bottom', 6, 2.062, 485, 'Net & mosquito', 86),
+  ('SK-1126', 'SK', 1, 'net track S top', 6, 1.536, 651, 'Net & mosquito', 87),
+  ('SK-1126A', 'SK', 1, 'net track S top', 6, 1.718, 582, 'Net & mosquito', 88),
+  ('SK-4818', 'SK', 1, 'double mullion', 6, 4.255, 235, 'Mullions & transoms', 89),
+  ('SK-4848', 'SK', 1, 'width', 6, 3.348, 299, 'Casement, projected & 99 series', 90),
+  ('SK-4849', 'SK', 1, 'height', 6, 3.078, 325, 'Casement, projected & 99 series', 91),
+  ('SK-4851', 'SK', 1, 'decuv', 6, 3.84, 260, 'Casement, projected & 99 series', 92),
+  ('SK-4851A', 'SK', 1, 'decuv', 6, 3.84, 260, 'Casement, projected & 99 series', 93),
+  ('SK-3885', 'SK', 1, 'special inner', 6, 2.724, 367, 'Casement, projected & 99 series', 94),
+  ('SK-3885A', 'SK', 1, 'casement 99 big', 6, 3.672, 272, 'Casement, projected & 99 series', 95),
+  ('SK-3687', 'SK', 1, 'special outer', 6, 2.256, 443, 'Casement, projected & 99 series', 96),
+  ('SK-N5021', 'SK', 1, 'projected outer', 6, 2.13, 469, 'Casement, projected & 99 series', 97),
+  ('SK-2055', 'SK', 1, 'projected mullion', 6, 3.186, 314, 'Mullions & transoms', 98),
+  ('SK-8887', 'SK', 1, 'small 99', 6, 3.21, 312, 'Casement, projected & 99 series', 99),
+  ('SK-6005', 'SK', 1, 'small 99 vain', 6, 3.498, 286, 'Casement, projected & 99 series', 100),
+  ('SK-6006', 'SK', 1, 'tripple mullion', 6, 4.59, 218, 'Mullions & transoms', 101),
+  ('SK-3421', 'SK', 1, 'big mullion with vain', 6, 3.93, 254, 'Mullions & transoms', 102),
+  ('SK-1873', 'SK', 1, '99 stopper', 6, 4.128, 242, 'Casement, projected & 99 series', 103),
+  ('SK-1873', 'SK', 1.5, '99 stopper', 6, 6.12, 163, 'Casement, projected & 99 series', 104),
+  ('SK-4853', 'SK', 1, 'small 99 casement mullion', 6, 3.276, 305, 'Mullions & transoms', 105),
+  ('SK-NY43', 'SK', 1, 'big 99 with vain', 6, 3.828, 261, 'Casement, projected & 99 series', 106),
+  ('SK-5303', 'SK', 1, 'casement net track bottom', 6, 4.021, 249, 'Net & mosquito', 107),
+  ('SK-5304', 'SK', 1, 'casement net track top', 6, 3.876, 258, 'Net & mosquito', 108),
+  ('SK-5092', 'SK', 1, '45*100 tube', 6, 4.65, 215, 'Tubes & pipes', 109),
+  ('SK-2299', 'SK', 1, '40*80 tube', 6, 3.828, 262, 'Tubes & pipes', 110),
+  ('SK-2301', 'SK', 1, '40*40 tube', 6, 2.538, 394, 'Tubes & pipes', 111),
+  ('SK-1046', 'SK', 1, 'infil tube', 6, 1.842, 543, 'Infill', 112),
+  ('SK-2306', 'SK', 1, 'big round infil', 6, 1.968, 508, 'Infill', 113),
+  ('SK-2306A', 'SK', 1, 'big round infil', 6, 1.92, 521, 'Infill', 114),
+  ('SK-2306B', 'SK', 1, 'medium round infil', 6, 1.692, 591, 'Infill', 115),
+  ('SK-2306C', 'SK', 1, 'small round infil', 6, 1.614, 620, 'Infill', 116),
+  ('SK-3201', 'SK', 2.5, 'thick round pipe', 6, 3.774, 265, 'Tubes & pipes', 117),
+  ('TRT-DE01-0.8', 'TRT', 0.8, 'transom 0.8', 6, 4.167, 240, 'Mullions & transoms', 118),
+  ('TRT-DE01-0.9', 'TRT', 0.9, 'transom 0.9', 6, 4.444, 225, 'Mullions & transoms', 119),
+  ('SK-DE01-1.0', 'SK', 1, 'transom 1.0', 6, 4.878, 205, 'Mullions & transoms', 120),
+  ('SK-DE01-1.1', 'SK', 1.1, 'transom 1.1', 6, 5.263, 190, 'Mullions & transoms', 121),
+  ('SK-DE01-1.2', 'SK', 1.2, 'transom 1.2', 6, 5.618, 178, 'Mullions & transoms', 122),
+  ('SK-DE01-1.5', 'SK', 1.5, 'transom 1.5', 6, 6.42, 156, 'Mullions & transoms', 123),
+  ('SK-DE01-2.0', 'SK', 2, 'transom 2.0', 6, 8.46, 118, 'Mullions & transoms', 124),
+  ('SK-DE01A-1.5', 'SK', 1.5, 'Big transom', 6, 8.244, 121, 'Mullions & transoms', 125),
+  ('SK-DE02-1.2', 'SK', 1.2, 'structural 1.2', 6, 3.066, 326, 'Structural', 126),
+  ('SK-DE02-1.5', 'SK', 1.5, 'structural 1.5', 6, 3.708, 270, 'Structural', 127),
+  ('SK-DE02-1.0', 'SK', 1, 'structural 1.0', 6, 2.624, 381, 'Structural', 128),
+  ('TRT-DE02-0.8', 'TRT', 0.8, '', 6, 2.066, 484, 'Other profiles', 129),
+  ('TRT-DE02-0.9', 'TRT', 0.9, 'structural 0.9', 6, 2.32, 431, 'Structural', 130),
+  ('SK-DE02A-1.2', 'SK', 1.2, 'structural A', 6, 2.772, 361, 'Structural', 131),
+  ('SK-DE02C-1.1', 'SK', 1.1, 'structural C', 6, 2.814, 355, 'Structural', 132),
+  ('SK-DE02E-1.0', 'SK', 1, 'Big open structural', 6, 2.632, 380, 'Structural', 133),
+  ('SK-DE02F-1.0', 'SK', 1, 'small open structural', 6, 2.326, 430, 'Structural', 134),
+  ('SK-DE03-1.5', 'SK', 1.5, 'swing door lockstyle', 6, 7.519, 133, 'Doors & handrails', 135),
+  ('SK-DE04-1.5', 'SK', 1.5, 'swing door mullion', 6, 8.64, 116, 'Doors & handrails', 136),
+  ('SK-DE05-1.5', 'SK', 1.5, 'swing door top', 6, 5.334, 187, 'Doors & handrails', 137),
+  ('SK-DE06-1.0', 'SK', 1, 'swing door bead', 6, 1.044, 958, 'Doors & handrails', 138),
+  ('SK-DE07-1.0', 'SK', 1, 'flat bar', 6, 1.302, 768, 'Covers, channels & dividers', 139),
+  ('SK-DE01B-1.2', 'SK', 1.2, 'small transum 1.2', 6, 4.098, 244, 'Mullions & transoms', 140),
+  ('SK-DE01B-1.0', 'SK', 1, 'small transum 1.0', 6, 3.546, 282, 'Mullions & transoms', 141),
+  ('SK-RFS01B', 'SK', 1.5, 'botton hand rail', 6, 5.291, 189, 'Doors & handrails', 142),
+  ('SK-RFS01A', 'SK', 1.5, 'botton hand rail', 6, 6.849, 146, 'Doors & handrails', 143),
+  ('SK-RFS02B-1.0', 'SK', 1, 'top handrail', 6, 3.155, 317, 'Doors & handrails', 144),
+  ('SK-RFS02B-1.2', 'SK', 1.2, 'top handrail', 6, 3.759, 266, 'Doors & handrails', 145),
+  ('SK-RFS02A-1.0', 'SK', 1, 'top handrail', 6, 3.817, 262, 'Doors & handrails', 146),
+  ('SK-RFS02A-1.2', 'SK', 1.2, 'top handrail', 6, 4.546, 220, 'Doors & handrails', 147),
+  ('SK-4816', 'SK', 1, 'top cover', 6, 2.844, 352, 'Covers, channels & dividers', 149),
+  ('SK-5039', 'SK', 1, 'lock stool', 6, 3.888, 257, 'Rails, lock stiles & interlocks', 150),
+  ('SK--5039', 'SK', 1, 'lock stool', 4.2, 2.722, 367, 'Rails, lock stiles & interlocks', 151),
+  ('SK-2305', 'SK', 1, '95 mullion', 6, 3.948, 253, 'Mullions & transoms', 152),
+  ('SK-20395', 'SK', 1, '96 mullion', 6, 4.224, 237, 'Mullions & transoms', 153),
+  ('SK-4852', 'SK', 1, 'K2000', 6, 3.99, 251, 'Casement, projected & 99 series', 154),
+  ('SK-ZJ-40*40CT', 'SK', 1, '40*80 core', 6, 2.328, 430, 'Tubes & pipes', 155),
+  ('SK-3302', 'SK', 1, 'sun breaker', 6, 1.47, 680, 'Covers, channels & dividers', 156),
+  ('SK-4024', 'SK', 1, 'U channel', 6, 1.59, 629, 'Covers, channels & dividers', 157),
+  ('SK-2308', 'SK', 1, '96 cover', 6, 2.174, 460, 'Covers, channels & dividers', 158),
+  ('SK-2309', 'SK', 1, '95 cover', 6, 1.458, 686, 'Covers, channels & dividers', 159),
+  ('SK-NY31', 'SK', 1, 'Shine bead', 6, 1.182, 846, 'Beads', 160),
+  ('SK-1059', 'SK', 1, '40*40 bead', 6, 0.852, 1174, 'Beads', 161),
+  ('SK-5024', 'SK', 1, 'projected bead', 6, 1.08, 926, 'Beads', 162),
+  ('SK-5052', 'SK', 1, 'projected bead', 6, 1.192, 839, 'Beads', 163),
+  ('SK-5018', 'SK', 4, '', 6, 4.68, 214, 'Other profiles', 164),
+  ('SK-ZL-001', 'SK', 1.2, 'swing door', 6, 2.214, 452, 'Doors & handrails', 165),
+  ('SK-ZL-002', 'SK', 1.2, 'hindge door', 6, 2.748, 364, 'Doors & handrails', 166),
+  ('SK-ZL-003', 'SK', 1, 'ark special 94', 6, 2.598, 385, 'Casement, projected & 99 series', 167),
+  ('TRT-ZL-004', 'SK', 0.8, 'ebm sunbreaker', 6, 2.538, 394, 'EBM system', 168),
+  ('SK-ZL-005', 'SK', 1, 'small fix structural', 6, 1.986, 504, 'Structural', 169),
+  ('SK-ZL-006', 'SK', 1, 'small open structural', 6, 1.974, 507, 'Structural', 170),
+  ('SK-ZL-007', 'SK', 1, 'ebm net u channel', 6, 1.362, 734, 'EBM system', 171),
+  ('SK-ZL-008', 'SK', 1.2, 'big K2000', 6, 5.982, 167, 'Casement, projected & 99 series', 172),
+  ('SK-100*20', 'SK', 1.5, '100/20 tube', 6, 5.712, 175, 'Tubes & pipes', 173),
+  ('SK-YX-001', 'SK', 1, 'K2000 BEAD', 6, 1.074, 931, 'Beads', 174),
+  ('SK-11227', 'SK', 1, '98 BEAD LONG', 6, 1.116, 896, 'Beads', 175),
+  ('SK-11228', 'SK', 1, '99 BEAD SHORT', 6, 1.008, 992, 'Beads', 176),
+  ('SK-7002B', 'SK', 1, 'EBM D/ TRACK', 6, 5.448, 184, 'EBM system', 177),
+  ('SK-7003A', 'SK', 1, 'EBM D/JAMB', 6, 3.3, 303, 'EBM system', 178),
+  ('SK-7004A', 'SK', 1, 'EBM TOP/BOTTOM', 6, 2.826, 354, 'EBM system', 179),
+  ('SK-7006A', 'SK', 1, 'EBM LOCKSTLYE', 6, 3.036, 329, 'EBM system', 180),
+  ('SK-7007A', 'SK', 1, 'EBM INTERLOCK', 6, 2.928, 342, 'EBM system', 181),
+  ('SK-4601A', 'SK', 1, 'EBM FRAME', 6, 3.12, 321, 'EBM system', 182),
+  ('SK-4603B', 'SK', 1, 'EBM PANNEL WITHOUT BEAD', 6, 3.564, 281, 'EBM system', 183),
+  ('SK-4604', 'SK', 1, 'EBM 1132', 6, 2.094, 478, 'EBM system', 184),
+  ('SK-7010A', 'SK', 1, 'EBM BEAD SMALL', 6, 1.5, 667, 'EBM system', 185),
+  ('SK-7010B', 'SK', 1, 'EBM DOUBLE GLASING BEAD', 6, 1.194, 838, 'EBM system', 186),
+  ('SK-7011', 'SK', 1, 'GHANA LOCKSTYLE', 6, 3.498, 286, 'Ghana system', 187),
+  ('SK-7012', 'SK', 1, 'SPECIAL GHANA LOCKYSTAL', 6, 3.462, 289, 'Ghana system', 188),
+  ('SK-7013', 'SK', 1, 'GHANA INTERLOCK', 6, 1.68, 595, 'Ghana system', 189),
+  ('SK-7014', 'SK', 1.2, 'EBM E TRACK', 6, 7.758, 129, 'EBM system', 190),
+  ('SK-7015', 'SK', 1, 'GHANA D/ TRACK', 6, 4.386, 228, 'Ghana system', 191),
+  ('SK-7016', 'SK', 1.1, 'GHANA 3 TRACK', 6, 6.288, 159, 'Ghana system', 192),
+  ('SK-7017', 'SK', 1, 'SPECIAL GHANA D/TRACK', 6, 4.896, 204, 'Ghana system', 193),
+  ('SK-7018', 'SK', 1.2, 'EBM 3 JAMB', 6, 4.602, 217, 'EBM system', 194),
+  ('SK-4605', 'SK', 1.3, 'standard 2 panel', 6, 4.854, 206, 'Covers, channels & dividers', 195),
+  ('SK-4606', 'SK', 1.3, 'standard width', 6, 4.29, 233, 'Casement, projected & 99 series', 196),
+  ('TRT-4607', 'TRT', 0.9, 'BIG WIDTH 0.9', 6, 3.636, 275, 'Casement, projected & 99 series', 197),
+  ('SK-4607', 'SK', 1, 'BIG WIDTH 1.0', 6, 4.033, 248, 'Casement, projected & 99 series', 198),
+  ('SK-4608', 'SK', 1.3, 'standard height', 6, 3.888, 257, 'Casement, projected & 99 series', 199),
+  ('SK-4609', 'SK', 1.3, 'standard Decuv', 6, 4.884, 205, 'Casement, projected & 99 series', 200),
+  ('SK-4610', 'SK', 1, 'EBM MULLIUM', 6, 3.672, 272, 'EBM system', 201),
+  ('SK-7002', 'SK', 1.4, 'DOUBLE GLASINGEBM D/ TRACK', 6, 5.91, 169, 'EBM system', 202),
+  ('SK-7003', 'SK', 1.4, 'DOUBLE GLSING EBM D/JAMB', 6, 4.194, 238, 'EBM system', 203),
+  ('SK-7004', 'SK', 1.4, 'DOUBLE GLASING EBM TOP/BOT', 6, 3.618, 276, 'EBM system', 204),
+  ('SK-7006', 'SK', 1.4, 'DOUBLE GLASING EBM LOCKSTLYE', 6, 3.894, 257, 'EBM system', 205),
+  ('SK-7007', 'SK', 1.4, 'DOUBLE GLASING EBM INTERLOCK', 6, 3.78, 265, 'EBM system', 206),
+  ('SK-7010', 'SK', 1, 'EBM BEAD BIG', 6, 1.524, 656, 'EBM system', 207),
+  ('SK-N5001-1.4', 'SK', 1.4, 'double track', 6, 4.405, 227, 'Tracks & jambs', 209),
+  ('SK-N5035-1.4', 'SK', 1.4, 'tripple track', 6, 6.667, 150, 'Tracks & jambs', 210),
+  ('SK-N5033-1.4', 'SK', 1.4, 'double side jamb', 6, 3.788, 264, 'Tracks & jambs', 211),
+  ('SK-NY35-1.4', 'SK', 1.4, 'top rail', 6, 3.876, 258, 'Rails, lock stiles & interlocks', 212),
+  ('SK-NY38-1.4', 'SK', 1.4, 'bottom rail', 6, 4.167, 240, 'Rails, lock stiles & interlocks', 213),
+  ('SK-NY47-1.4', 'SK', 1.4, 'lock style', 6, 3.968, 252, 'Rails, lock stiles & interlocks', 214),
+  ('SK-NY48-1.4', 'SK', 1.4, 'inter lock', 6, 3.597, 278, 'Rails, lock stiles & interlocks', 215),
+  ('SK-N5003-1.4', 'SK', 1.4, 'single side jamb', 6, 2.451, 408, 'Tracks & jambs', 216),
+  ('SK-5039-1.5', 'SK', 1.5, 'lock stool 1.5', 6, 5.848, 171, 'Rails, lock stiles & interlocks', 218),
+  ('SK-2299-1.5', 'SK', 1.5, '40/80 1.5', 6, 5.748, 174, 'Tubes & pipes', 219),
+  ('SK-4852-1.2', 'SK', 1.2, 'K2000 1.2', 6, 4.878, 205, 'Casement, projected & 99 series', 220),
+  ('SK-4601A-1.2', 'SK', 1.2, 'EBM FRAME 1.2', 6, 3.846, 260, 'EBM system', 221),
+  ('SK-4603B-1.2', 'SK', 1.2, 'EBM PANNEL WITHOUT BEAD 1.2', 6, 4.587, 218, 'EBM system', 222),
+  ('SK-7002B-1.2', 'SK', 1.2, 'EBM D/ TRACK 1.2', 6, 6.623, 151, 'EBM system', 223),
+  ('SK-7003A-1.2', 'SK', 1.2, 'EBM D/JAMB 1.2', 6, 4.184, 239, 'EBM system', 224),
+  ('SK-7004A-1.2', 'SK', 1.2, 'EBM TOP/BOTTOM 1.2', 6, 3.559, 281, 'EBM system', 225),
+  ('SK-7006A-1.2', 'SK', 1.2, 'EBM LOCKSTYLE 1.2', 6, 3.876, 258, 'EBM system', 226),
+  ('SK-7007A-1.2', 'SK', 1.2, 'EBM INTERLOCK 1.2', 6, 3.69, 271, 'EBM system', 227),
+  ('SK-RJK001', 'SK', 2.3, 'transom ANGLE', 6, 5.076, 197, 'Mullions & transoms', 229),
+  ('SK-RAC057', 'SK', 1.5, 'transom ANGLE', 6, 3.509, 285, 'Mullions & transoms', 230),
+  ('SK-RJK003', 'SK', 1, 'EBM panel with Bead', 6, 4.808, 208, 'EBM system', 231),
+  ('SK-RJK004-1.1', 'SK', 1.1, 'GLASS U CHANNEL', 6, 1.377, 726, 'Covers, channels & dividers', 232),
+  ('SK-RJK004-1.3', 'SK', 1.3, 'GLASS U CHANNEL', 6, 1.587, 630, 'Covers, channels & dividers', 233),
+  ('SK-RJK011', 'SK', 1, 'DOUBLE GLASING EBM PANEL W/BEAD', 6, 4.444, 225, 'EBM system', 234),
+  ('SK-RJK015', 'SK', 2.3, 'EBM FLAT BAR', 6, 0.806, 1240, 'EBM system', 235),
+  ('TRT-RJK018', 'TRT', 0.9, 'Big open structural', 6, 2.353, 425, 'Structural', 236),
+  ('TRT-RJK027', 'TRT', 0.9, '20/20 TUBE', 6, 1.134, 882, 'Tubes & pipes', 237),
+  ('SK-RJK030', 'SK', 1.3, 'Big transom 1.3', 6, 7.299, 137, 'Mullions & transoms', 238),
+  ('TRT-RJK031', 'TRT', 0.8, 'EBM 1132', 6, 1.736, 576, 'EBM system', 239),
+  ('SK-RAC014', 'SK', 1.6, 'EBM FLAT BAR', 6, 0.64, 1563, 'EBM system', 240),
+  ('SK-RAC025', 'SK', 2, 'EBM MULLIUM ANGLE', 6, 1.361, 735, 'EBM system', 242),
+  ('TRT-RAC046A', 'TRT', 0.9, 'EBM PANEL WITH BEAD', 6, 4.132, 242, 'EBM system', 243),
+  ('TRT-RAC049', 'TRT', 0.9, 'STRUCTURAL FIX TOP RONGTAI', 6, 2.32, 431, 'Structural', 244),
+  ('TRT-RAC072', 'TRT', 0.8, 'GHANA D/ TRACK 0.8', 6, 3.717, 269, 'Ghana system', 245),
+  ('TRT-RAC073', 'TRT', 0.9, 'GHANA D/ TRACK 0.9', 6, 4.082, 245, 'Ghana system', 246),
+  ('TRT-RAC075', 'TRT', 0.8, 'GHANA 3 TRACK 0.8', 6, 4.831, 207, 'Ghana system', 247),
+  ('TRT-RAC076', 'TRT', 0.8, 'GHANA LOCKSTYLE 0.8', 6, 2.959, 338, 'Ghana system', 248),
+  ('TRT-RAC077', 'TRT', 0.9, 'GHANA LOCKSTYLE 0.9', 6, 3.311, 302, 'Ghana system', 249),
+  ('TRT-RAC080', 'TRT', 0.8, 'GHANA INTERLOCK 0.8', 6, 1.422, 703, 'Ghana system', 250),
+  ('TRT-RAC066', 'TRT', 0.9, 'FURNITURE MATERIAL HANDLE', 6, 2.227, 449, 'Doors & handrails', 251),
+  ('TRT-RAC067', 'TRT', 0.9, 'FURNITURE MATERIAL FLAT', 6, 1.992, 502, 'Doors & handrails', 252),
+  ('SK-40*40-1.5', 'SK', 1.5, 'angle', 6, 1.333, 750, 'Angles & sub frames', 254),
+  ('SK-40*40-1.8', 'SK', 1.8, 'angle', 6, 1.563, 640, 'Angles & sub frames', 255),
+  ('SK-40*40-2.0', 'SK', 2, 'angle', 6, 1.667, 600, 'Angles & sub frames', 256),
+  ('SK-40*40-2.2', 'SK', 2.2, 'angle', 6, 1.923, 520, 'Angles & sub frames', 257),
+  ('SK-40*40-2.5', 'SK', 2.5, 'angle', 6, 2.127, 470, 'Angles & sub frames', 258),
+  ('SK-40*40-2.7', 'SK', 2.7, 'angle', 6, 2.299, 435, 'Angles & sub frames', 259),
+  ('SK-35*35-1.5', 'SK', 1.5, 'angle', 6, null, null, 'Angles & sub frames', 260),
+  ('SK-35*35-1.8', 'SK', 1.8, 'angle', 6, 1.388, 720, 'Angles & sub frames', 261),
+  ('SK-35*35-2.0', 'SK', 2, 'angle', 6, 1.526, 655, 'Angles & sub frames', 262),
+  ('SK-35*35-2.2', 'SK', 2.2, 'angle', 6, null, null, 'Angles & sub frames', 263),
+  ('SK-35*35-2.5', 'SK', 2.5, 'angle', 6, 1.905, 525, 'Angles & sub frames', 264),
+  ('SK-35*35-2.7', 'SK', 2.7, 'angle', 6, 2.041, 490, 'Angles & sub frames', 265),
+  ('SK-25*25-1.5', 'SK', 1.5, 'angle', 6, 0.82, 1220, 'Angles & sub frames', 266),
+  ('SK-25*25-1.8', 'SK', 1.8, 'angle', 6, 0.971, 1030, 'Angles & sub frames', 267),
+  ('SK-25*25-2.0', 'SK', 2, 'angle', 6, 1.031, 970, 'Angles & sub frames', 268),
+  ('SK-25*25-2.2', 'SK', 2.2, 'angle', 6, 1.163, 860, 'Angles & sub frames', 269),
+  ('SK-25*25-2.5', 'SK', 2.5, 'angle', 6, 1.299, 770, 'Angles & sub frames', 270),
+  ('SK-25*25-2.7', 'SK', 2.7, 'angle', 6, 1.399, 715, 'Angles & sub frames', 271),
+  ('SK-5557-1.0', 'SK', 1, 'sub frame', 6, 1.667, 600, 'Angles & sub frames', 272),
+  ('RT-5557-0.7', 'RT', 0.7, 'sub frame', 6, 1.274, 785, 'Angles & sub frames', 273),
+  ('RT-RAC050', 'RT', 0.6, 'sub frame', 6, 1.22, 820, 'Angles & sub frames', 274),
+  ('RT-RAC037', 'TRT', 0.9, 'sub frame', 6, 1.754, 570, 'Angles & sub frames', 275),
+  ('SK-40*40-1.5P', 'SK', 1.5, 'angle COLORED', 6, 1.47492625368732, 678, 'Angles & sub frames', 277),
+  ('SK-40*40-1.8P', 'SK', 1.8, 'angle COLORED', 6, 1.73010380622837, 578, 'Angles & sub frames', 278),
+  ('SK-40*40-2.0P', 'SK', 2, 'angle COLORED', 6, 1.85185185185185, 540, 'Angles & sub frames', 279),
+  ('SK-40*40-2.2P', 'SK', 2.2, 'angle COLORED', 6, 2.12765957446808, 470, 'Angles & sub frames', 280),
+  ('SK-40*40-2.5P', 'SK', 2.5, 'angle COLORED', 6, 2.35294117647059, 425, 'Angles & sub frames', 281),
+  ('SK-40*40-2.7P', 'SK', 2.7, 'angle COLORED', 6, 2.55102040816327, 392, 'Angles & sub frames', 282),
+  ('SK-25*25-1.5P', 'SK', 1.5, 'angle COLORED', 6, 0.909090909090909, 1100, 'Angles & sub frames', 283),
+  ('SK-25*25-1.8P', 'SK', 1.8, 'angle COLORED', 6, 1.0752688172043, 930, 'Angles & sub frames', 284),
+  ('SK-25*25-2.0P', 'SK', 2, 'angle COLORED', 6, 1.14285714285714, 875, 'Angles & sub frames', 285),
+  ('SK-25*25-2.2P', 'SK', 2.2, 'angle COLORED', 6, 1.29032258064516, 775, 'Angles & sub frames', 286),
+  ('SK-25*25-2.5P', 'SK', 2.5, 'angle COLORED', 6, 1.43884892086331, 695, 'Angles & sub frames', 287),
+  ('SK-25*25-2.7P', 'SK', 2.7, 'angle COLORED', 6, 1.55038759689922, 645, 'Angles & sub frames', 288),
+  ('SK-5557-1.0P', 'SK', 1, 'sub frame COLORED', 6, 1.81818181818182, 550, 'Angles & sub frames', 289),
+  ('RT-5557-0.7P', 'RT', 0.7, 'sub frame COLORED', 6, 1.38312586445367, 723, 'Angles & sub frames', 290),
+  ('RT-RAC050-0.6P', 'RT', 0.6, 'sub frame COLORED', 6, 1.31926121372032, 758, 'Angles & sub frames', 291),
+  ('RT-RAC037-0.9P', 'TRT', 0.9, 'sub frame COLORED', 6, 1.90114068441065, 526, 'Angles & sub frames', 292),
+  ('TRT-F1028', 'TRT', 0.75, 'top divider S', 6, 1.236, 809, 'Covers, channels & dividers', 294),
+  ('TRT-3465', 'TRT', 0.75, 'big divider', 6, 2.088, 479, 'Covers, channels & dividers', 295),
+  ('TRT-N5003', 'TRT', 0.75, 'single side jamb', 6, 1.29, 775, 'Tracks & jambs', 296),
+  ('TRT-N5002', 'TRT', 0.75, 'single track', 6, 1.26, 794, 'Tracks & jambs', 297),
+  ('TRT-NC1132', 'TRT', 0.75, 'net inner bead', 6, 0.792, 1263, 'Net & mosquito', 298),
+  ('TRT-NY48', 'TRT', 0.75, 'inter lock', 6, 1.83, 546, 'Rails, lock stiles & interlocks', 299),
+  ('TRT-NY47', 'TRT', 0.75, 'lock style', 6, 2.01, 498, 'Rails, lock stiles & interlocks', 300),
+  ('TRT-NY38', 'TRT', 0.75, 'bottom rail', 6, 2.16, 463, 'Rails, lock stiles & interlocks', 301),
+  ('TRT-NY35', 'TRT', 0.75, 'top rail', 6, 1.98, 505, 'Rails, lock stiles & interlocks', 302),
+  ('TRT-N5033', 'TRT', 0.75, 'double side jamb', 6, 2.052, 487, 'Tracks & jambs', 303),
+  ('TRT-M5001', 'TRT', 0.75, 'double track', 6, 2.376, 421, 'Tracks & jambs', 304),
+  ('TRT-M5035', 'TRT', 0.75, 'tripple track', 6, 3.312, 302, 'Tracks & jambs', 305),
+  ('TRT-ZL007', 'TRT', 0.8, 'ebm net u channel', 6, 1.152, 868, 'EBM system', 306),
+  ('RT-ZL007', 'RT', 0.7, 'ebm net u channel', 6, 1.056, 947, 'EBM system', 307),
+  ('TRT-2522', 'TRT', 0.85, 'Frameless u channel', 6, 1.116, 896, 'Covers, channels & dividers', 308),
+  ('TRT-4610', 'TRT', 0.85, 'EBM MULLIUM', 6, 3.042, 329, 'EBM system', 309),
+  ('TRT-4604', 'TRT', 0.8, 'EBM 1132', 6, 1.728, 579, 'EBM system', 310),
+  ('RT-4604', 'RT', 0.7, 'EBM 1132', 6, 1.548, 646, 'EBM system', 311),
+  ('TRT-4603C', 'TRT', 0.85, 'EBM panel with Bead', 6, 3.834, 261, 'EBM system', 312),
+  ('TRT-4603B', 'TRT', 0.85, 'EBM PANNEL WITHOUT BEAD', 6, 3.06, 327, 'EBM system', 313),
+  ('TRT-4601A', 'TRT', 0.85, 'EBM FRAME', 6, 2.67, 375, 'EBM system', 314),
+  ('RT-2299', 'RT', 0.7, '40*80 tube', 6, 2.688, 372, 'Tubes & pipes', 315),
+  ('TRT-5304', 'TRT', 0.85, 'casement net track top', 6, 3.24, 309, 'Net & mosquito', 316),
+  ('TRT-5303', 'TRT', 0.85, 'casement net track bottom', 6, 3.42, 292, 'Net & mosquito', 317),
+  ('TRT-1126A', 'TRT', 0.85, 'net track S top', 6, 1.38, 725, 'Net & mosquito', 318),
+  ('TRT-1125A', 'TRT', 0.85, 'net track S bottom', 6, 1.74, 575, 'Net & mosquito', 319),
+  ('TRT-6006', 'TRT', 0.85, 'tripple mullion', 6, 3.888, 257, 'Mullions & transoms', 320),
+  ('TRT-3885A', 'TRT', 0.85, 'casement 99 big', 6, 3.162, 316, 'Casement, projected & 99 series', 321),
+  ('TRT-3885', 'TRT', 0.85, 'special inner', 6, 2.25, 444, 'Casement, projected & 99 series', 322),
+  ('TRT-4818', 'TRT', 0.85, 'double mullion', 6, 3.72, 269, 'Mullions & transoms', 323),
+  ('TRT-4849', 'TRT', 0.85, 'height', 6, 2.622, 381, 'Casement, projected & 99 series', 324),
+  ('TRT-4848', 'TRT', 0.85, 'width', 6, 2.88, 347, 'Casement, projected & 99 series', 325),
+  ('TRT-4851', 'TRT', 0.85, 'decuv', 6, 3.27, 306, 'Casement, projected & 99 series', 326)
+) as v(code, brand, gauge, name, len, wt, pct, cat, src)
+on conflict (col, id) do nothing;
+
+-- "Delete all records" / "Load demo data" keep the item catalogue
+create or replace function public.clear_records() returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if public.my_role() is distinct from 'Owner' then
+    raise exception 'Only the Owner can do this' using errcode = '42501';
+  end if;
+  delete from public.records where col <> 'items';
+end $$;
+
+-- function permissions (re-applied because functions were replaced)
+revoke execute on all functions in schema public from public, anon, authenticated;
+grant execute on function public.submit_quote(jsonb), public.submit_enquiry(jsonb), public.needs_setup() to anon, authenticated;
+grant execute on function public.my_role(), public.can_read(text), public.can_write(text), public.clear_records() to authenticated;

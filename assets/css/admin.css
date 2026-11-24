@@ -612,3 +612,18 @@ tr.total td { border-top: 2px solid var(--line); }
 /* no visible scrollbars anywhere (scrolling still works) */
 html, body, * { scrollbar-width: none; -ms-overflow-style: none; }
 *::-webkit-scrollbar { display: none; width: 0; height: 0; }
+
+/* ---------- ITEMS ---------- */
+.item-cats, .item-brands { justify-content: flex-start; flex-wrap: wrap; margin-bottom: 10px; }
+.item-cats button span { opacity: .6; font-weight: 700; margin-left: 4px; }
+.item-cats button.on span { opacity: .85; }
+.item-brands { margin-bottom: 16px; }
+.item-brands button { background: transparent; border: 1.5px solid var(--line); }
+.item-brands button.on { background: var(--orange); border-color: var(--orange); color: #fff; }
+.import-btn { background: #fff; border: 1.5px solid var(--line); }
+.import-sum { font-size: 14.5px; margin: 4px 0 10px; }
+.import-cats { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.import-cats span { font-size: 12.5px; background: #f2f2f6; border-radius: 99px; padding: 5px 10px; }
+@media (max-width: 760px) {
+  .item-cats, .item-brands { flex-wrap: nowrap; overflow-x: auto; }
+}

@@ -35,6 +35,12 @@ select public.make_head_admin('you@example.com');
 - For each admin, the head admin sets every section to **No access**, **View** or **Edit**: Clients, Website enquiries, Procurement, Quotations, Invoices, Payments, Expenses, Vendors, Reports. Presets (Full access, Procurement, Finance, View only) fill the grid in one tap. Set an admin to **Disabled** to remove all access.
 - These limits are enforced in the database (Row Level Security), not just hidden in the menu.
 
+## Items catalogue
+
+**Items** (top of the sidebar) is the product catalogue: aluminium profiles with code, brand, gauge, length, weight per piece and pieces per ton, grouped into categories (Tracks & jambs, Mullions & transoms, Beads, EBM system, Ghana system, Angles & sub frames, and more). Filter by category and brand, search, add or edit items, or **Import spreadsheet** (.xlsx or .csv with a Code column; items already in the catalogue are skipped). Catalogue items are suggested when adding lines to quotations and invoices, and in Stock & batches.
+
+Run `supabase/004_items.sql` in the SQL Editor (after 003). It adds the Items section and registers the 314 profiles from QUANTITY TABLE.xlsx. It is safe to re-run. "Delete all records" and "Load demo data" keep the catalogue.
+
 ## Admin modules
 
 The admin sidebar is grouped into:

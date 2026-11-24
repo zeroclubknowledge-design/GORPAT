@@ -90,7 +90,8 @@
     let input;
     if (f.type === 'select') input = `<select name="${f.name}" ${req}>${(typeof f.options === 'function' ? f.options() : f.options).map((o) => { const [ov, ol] = Array.isArray(o) ? o : [o, o]; return `<option value="${esc(ov)}" ${String(ov) === String(val) ? 'selected' : ''}>${esc(ol)}</option>`; }).join('')}</select>`;
     else if (f.type === 'textarea') input = `<textarea name="${f.name}" rows="${f.rows || 3}" ${req}>${esc(val)}</textarea>`;
-    else input = `<input name="${f.name}" type="${f.type || 'text'}" value="${esc(val)}" ${f.step ? `step="${f.step}"` : ''} ${f.min != null ? `min="${f.min}"` : ''} placeholder="${esc(f.placeholder || '')}" ${req}>`;
+    else input = `<input name="${f.name}" type="${f.type || 'text'}" value="${esc(val)}" ${f.step ? `step="${f.step}"` : ''} ${f.min != null ? `min="${f.min}"` : ''} placeholder="${esc(f.placeholder || '')}" ${f.suggest ? `list="dl-${f.name}" autocomplete="off"` : ''} ${req}>`
+      + (f.suggest ? `<datalist id="dl-${f.name}">${f.suggest().map((o) => `<option value="${esc(o)}">`).join('')}</datalist>` : '');
     return `<label class="fld">${esc(f.label)}${input}</label>`;
   }
   function formModal(title, fields, rec, onSave, { onDelete, extraLeft = '' } = {}) {
@@ -108,7 +109,7 @@
       form.querySelectorAll('[required]').forEach((el) => { const bad = !el.value.trim(); el.style.borderColor = bad ? 'var(--red)' : ''; if (bad) ok = false; });
       if (!ok) return;
       const data = Object.fromEntries(new FormData(form));
-      fields.forEach((f) => { if (f.type === 'number') data[f.name] = Number(data[f.name]) || 0; });
+      fields.forEach((f) => { if (f.type === 'number') data[f.name] = f.nullable && String(data[f.name] ?? '').trim() === '' ? null : Number(data[f.name]) || 0; });
       onSave(data); closeModal();
     });
     if (onDelete) $('[data-del]', m).addEventListener('click', () => { if (confirm('Delete this record? This cannot be undone.')) { onDelete(); closeModal(); } });
@@ -117,7 +118,7 @@
 
   /* ---------------- shell ---------------- */
   const NAV = [
-    ['', [['overview', 'Business overview']]],
+    ['', [['overview', 'Business overview'], ['items', 'Items']]],
     ['Sales & CRM', [['clients', 'Clients'], ['pipeline', 'Pipeline'], ['quotations', 'Quotations'], ['invoices', 'Invoices'], ['returns', 'Returns & credit notes'], ['payments', 'Payments']]],
     ['Procurement & logistics', [['procurement', 'Procurement'], ['vendors', 'Vendors'], ['warehouses', 'Warehouses'], ['stock', 'Stock & batches'], ['transfers', 'Transfers'], ['deliveries', 'Deliveries'], ['drivers', 'Drivers & routes']]],
     ['Financials', [['expenses', 'Expenses'], ['pnl', 'P&L statement'], ['cashflow', 'Cash flow'], ['vat', 'VAT summary'], ['costledger', 'Cost ledger'], ['reports', 'Reports']]],
@@ -137,7 +138,7 @@
     }).join('');
   }
   const PAGE_COL = { clients: 'clients', procurement: 'procurement', invoices: 'invoices', quotations: 'quotations', expenses: 'expenses', payments: 'payments', vendors: 'vendors',
-    pipeline: 'deals', returns: 'returns', warehouses: 'warehouses', stock: 'stock', transfers: 'transfers', deliveries: 'deliveries', drivers: 'drivers',
+    items: 'items', pipeline: 'deals', returns: 'returns', warehouses: 'warehouses', stock: 'stock', transfers: 'transfers', deliveries: 'deliveries', drivers: 'drivers',
     costledger: 'cost_ledger', employees: 'employees', attendance: 'attendance', payroll: 'payroll' };
   function canSee(page) {
     if (page === 'overview') return true;
@@ -332,7 +333,8 @@
     i != null ? { onDelete: () => { ED.doc.items.splice(i, 1); dirty(); } } : {});
     const inp = $('input[name=desc]', m);
     inp.setAttribute('list', 'pastItems');
-    m.insertAdjacentHTML('beforeend', `<datalist id="pastItems">${past.map((p) => `<option value="${esc(p)}">`).join('')}</datalist>`);
+    const catalogue = db.all('items').filter((i) => i.active !== false).map((i) => `${i.code} — ${i.name}${i.gauge ? ` (${i.gauge}mm)` : ''}`);
+    m.insertAdjacentHTML('beforeend', `<datalist id="pastItems">${[...new Set(catalogue.concat(past))].map((p) => `<option value="${esc(p)}">`).join('')}</datalist>`);
     const amt = document.createElement('div'); amt.className = 'sum-line strong'; amt.style.margin = '0 0 6px';
     const upd = () => { amt.innerHTML = `<span>Amount</span><span class="tnum">${money((Number($('[name=qty]', m).value) || 0) * (Number($('[name=rate]', m).value) || 0))}</span>`; };
     $('.modal-foot', m).before(amt); upd(); m.addEventListener('input', upd);
@@ -682,15 +684,15 @@
   }
 
   let STAFF = [];
-  const SECTION_LABELS = { clients: 'Clients', enquiries: 'Website enquiries', deals: 'Pipeline', quotations: 'Quotations', invoices: 'Invoices', returns: 'Returns & credit notes', payments: 'Payments',
+  const SECTION_LABELS = { items: 'Items', clients: 'Clients', enquiries: 'Website enquiries', deals: 'Pipeline', quotations: 'Quotations', invoices: 'Invoices', returns: 'Returns & credit notes', payments: 'Payments',
     procurement: 'Procurement', vendors: 'Vendors', warehouses: 'Warehouses', stock: 'Stock & batches', transfers: 'Transfers', deliveries: 'Deliveries', drivers: 'Drivers & routes',
     expenses: 'Expenses', cost_ledger: 'Cost ledger', reports: 'Reports, P&L, cash flow & VAT', employees: 'Staff (HR)', attendance: 'Attendance', payroll: 'Payroll' };
   const ALL_EDIT = Object.fromEntries(GT.SECTIONS.map((k) => [k, k === 'reports' ? 'view' : 'edit']));
   const PRESETS = [
     ['Full access', ALL_EDIT],
-    ['Sales', { clients: 'edit', enquiries: 'edit', deals: 'edit', quotations: 'edit', invoices: 'view', returns: 'edit', deliveries: 'view' }],
-    ['Procurement & logistics', { clients: 'view', quotations: 'view', invoices: 'view', procurement: 'edit', vendors: 'edit', warehouses: 'edit', stock: 'edit', transfers: 'edit', deliveries: 'edit', drivers: 'edit', cost_ledger: 'edit' }],
-    ['Finance', { clients: 'edit', quotations: 'edit', invoices: 'edit', returns: 'edit', payments: 'edit', procurement: 'view', vendors: 'view', expenses: 'edit', cost_ledger: 'view', reports: 'view', payroll: 'view' }],
+    ['Sales', { items: 'view', clients: 'edit', enquiries: 'edit', deals: 'edit', quotations: 'edit', invoices: 'view', returns: 'edit', deliveries: 'view' }],
+    ['Procurement & logistics', { items: 'edit', clients: 'view', quotations: 'view', invoices: 'view', procurement: 'edit', vendors: 'edit', warehouses: 'edit', stock: 'edit', transfers: 'edit', deliveries: 'edit', drivers: 'edit', cost_ledger: 'edit' }],
+    ['Finance', { items: 'view', clients: 'edit', quotations: 'edit', invoices: 'edit', returns: 'edit', payments: 'edit', procurement: 'view', vendors: 'view', expenses: 'edit', cost_ledger: 'view', reports: 'view', payroll: 'view' }],
     ['HR', { employees: 'edit', attendance: 'edit', payroll: 'edit' }],
     ['View only', Object.fromEntries(GT.SECTIONS.map((k) => [k, 'view']))],
     ['No access', {}],
@@ -855,7 +857,7 @@
     warehouses: [{ name: 'name', label: 'Warehouse name', required: true }, { name: 'location', label: 'Location' },
       { name: 'type', label: 'Type', type: 'select', options: ['Ambient', 'Chilled', 'Bonded', 'Open yard'], half: true }, { name: 'manager', label: 'Manager', half: true },
       { name: 'capacity', label: 'Capacity', type: 'number', min: 0, half: true }, { name: 'unit', label: 'Unit (pallets, crates, units…)', half: true }],
-    stock: [{ name: 'item', label: 'Item', required: true }, { name: 'sku', label: 'SKU / code', half: true }, { name: 'batch', label: 'Batch no.', half: true },
+    stock: [{ name: 'item', label: 'Item', required: true, suggest: () => db.all('items').map((i) => `${i.code} — ${i.name}`) }, { name: 'sku', label: 'SKU / code', half: true }, { name: 'batch', label: 'Batch no.', half: true },
       { name: 'warehouseId', label: 'Warehouse', type: 'select', options: pick('warehouses', (w) => w.name), half: true },
       { name: 'vendorId', label: 'Supplier', type: 'select', options: pick('vendors', (v) => v.name), half: true },
       { name: 'qty', label: 'Quantity on hand', type: 'number', min: 0, step: 'any', half: true }, { name: 'unitCost', label: 'Unit cost', type: 'number', min: 0, step: 'any', half: true },
@@ -1201,6 +1203,172 @@
     }
   }
 
+  /* ================= ITEMS CATALOGUE ================= */
+  P.items = '<path d="M12 2.5 21 7v10l-9 4.5L3 17V7z" fill="currentColor"/><path d="M3 7l9 4.5L21 7M12 11.5v10" fill="none" stroke="#fbfbfd" stroke-width="1.6"/><path d="M7.5 4.8 16.5 9.3" stroke="#fbfbfd" stroke-width="1.6"/>';
+  // Same rules as supabase/004_items.sql (generated from QUANTITY TABLE.xlsx): first match wins.
+  const ITEM_CATS = [
+    ['EBM system', /ebm/i], ['Ghana system', /ghana/i], ['Doors & handrails', /door|hand ?rail|hindge|furniture/i],
+    ['Structural', /structural/i], ['Net & mosquito', /\bnet\b/i], ['Mullions & transoms', /mull?i(o|u)m|mullion|trans(o|u)m/i],
+    ['Angles & sub frames', /angle|sub ?frame/i], ['Tracks & jambs', /track|jamb/i],
+    ['Rails, lock stiles & interlocks', /rail|lock ?st|inter ?lock|lockstyle|lockystal/i], ['Beads', /bead/i], ['Infill', /infil/i],
+    ['Tubes & pipes', /tube|pipe|core|^\d+\/\d+\b/i], ['Covers, channels & dividers', /cover|channel|divider|devider|breaker|flat|pann?el|frame/i],
+    ['Casement, projected & 99 series', /casement|projected|\b9[4-9]\b|decuv|width|height|special|stopper|k ?2000|rt-2000/i],
+  ];
+  const categorizeItem = (name) => { for (const [c, re] of ITEM_CATS) if (re.test(name || '')) return c; return 'Other profiles'; };
+  const ITEM_CAT_ORDER = ITEM_CATS.map((c) => c[0]).concat('Other profiles');
+  const itemCats = () => { const set = new Set(ITEM_CAT_ORDER); db.all('items').forEach((i) => i.category && set.add(i.category)); return [...set]; };
+  const itemKey = (i) => [i.code, i.gauge ?? '', i.length ?? '', i.name || '', i.weight ?? ''].join('|');
+  const dec = (n, d = 3) => (n === null || n === undefined || n === '' ? '—' : Number(n).toLocaleString('en-NG', { maximumFractionDigits: d }));
+
+  FIELDS.items = [
+    { name: 'code', label: 'Code', required: true, half: true, placeholder: 'e.g. SK-N5001' }, { name: 'brand', label: 'Brand', half: true, suggest: () => [...new Set(db.all('items').map((i) => i.brand).filter(Boolean))] },
+    { name: 'name', label: 'Name / description', required: true, placeholder: 'e.g. double track' },
+    { name: 'category', label: 'Category (leave blank to sort automatically)', suggest: itemCats },
+    { name: 'gauge', nullable: true, label: 'Gauge (mm)', type: 'number', min: 0, step: 'any', half: true }, { name: 'length', nullable: true, label: 'Length (m)', type: 'number', min: 0, step: 'any', half: true },
+    { name: 'weight', nullable: true, label: 'Weight per piece (kg)', type: 'number', min: 0, step: 'any', half: true }, { name: 'pcsPerTon', nullable: true, label: 'Pieces per ton', type: 'number', min: 0, step: 'any', half: true },
+    { name: 'unit', label: 'Unit', type: 'select', options: ['pc', 'length', 'kg', 'ton', 'bundle', 'set'], half: true }, { name: 'price', nullable: true, label: 'Unit price (optional)', type: 'number', min: 0, step: 'any', half: true },
+    { name: 'active', label: 'Status', type: 'select', options: [['true', 'Active'], ['false', 'Discontinued']] }, { name: 'notes', label: 'Notes', type: 'textarea', rows: 2 },
+  ];
+  DEF.items = () => ({ unit: 'pc', active: 'true' });
+  TITLES.items = 'item';
+  HOOK.items = (d) => {
+    d.code = (d.code || '').trim(); d.name = (d.name || '').replace(/\s+/g, ' ').trim();
+    d.category = (d.category || '').trim() || categorizeItem(d.name);
+    d.active = d.active !== 'false' && d.active !== false;
+    Object.keys(d).forEach((k) => { if (d[k] === null) delete d[k]; });
+  };
+
+  let itemCat = 'All', itemBrand = 'All';
+  PAGES.items = function () {
+    const all = db.all('items');
+    const cats = itemCats().filter((c) => all.some((i) => i.category === c));
+    if (itemCat !== 'All' && !cats.includes(itemCat)) itemCat = 'All';
+    const brands = [...new Set(all.map((i) => i.brand).filter(Boolean))].sort();
+    const order = (c) => { const k = ITEM_CAT_ORDER.indexOf(c); return k < 0 ? 99 : k; };
+    const rows = all.filter((i) => (itemCat === 'All' || i.category === itemCat) && (itemBrand === 'All' || i.brand === itemBrand))
+      .sort((a, b) => order(a.category) - order(b.category) || String(a.code).localeCompare(String(b.code), undefined, { numeric: true }));
+    const count = (c) => all.filter((i) => i.category === c && (itemBrand === 'All' || i.brand === itemBrand)).length;
+    const canW = GT.can('write', 'items');
+    const chips = `<div class="seg item-cats">${['All'].concat(cats).map((c) => `<button data-icat="${esc(c)}" class="${itemCat === c ? 'on' : ''}">${esc(c)} <span class="tnum">${c === 'All' ? all.filter((i) => itemBrand === 'All' || i.brand === itemBrand).length : count(c)}</span></button>`).join('')}</div>`;
+    const brandSeg = brands.length > 1 ? `<div class="seg item-brands">${['All'].concat(brands).map((b) => `<button data-ibrand="${esc(b)}" class="${itemBrand === b ? 'on' : ''}">${b === 'All' ? 'All brands' : esc(b)}</button>`).join('')}</div>` : '';
+    tablePage({ key: 'it', title: 'Items', col: 'items', rows, addLabel: 'NEW ITEM',
+      tabs: canW ? '<button class="ghost import-btn" data-act="import-items">Import spreadsheet</button>' : '',
+      extraTop: subhead('Product catalogue: aluminium profiles by category, with gauge, length and weight. Used when writing quotations, invoices and stock.')
+        + kpiRow([['Items', num(all.length), `${all.filter((i) => i.active === false).length} discontinued`, true], ['Categories', cats.length], ['Brands', brands.length || '—'], ['Showing', num(rows.length), itemCat === 'All' ? 'all categories' : itemCat]])
+        + chips + brandSeg,
+      columns: [{ label: 'Code', get: (r) => r.code }, { label: 'Name', get: (r) => r.name || '—' }, { label: 'Category', get: (r) => r.category || '—' }, { label: 'Brand', get: (r) => r.brand || '—' },
+        { label: 'Gauge (mm)', r: true, get: (r) => dec(r.gauge, 2) }, { label: 'Length (m)', r: true, get: (r) => dec(r.length, 2) },
+        { label: 'Wt/pc (kg)', r: true, get: (r) => dec(r.weight, 3) }, { label: 'Pcs/ton', r: true, get: (r) => dec(r.pcsPerTon, 0) },
+        { label: 'Status', html: true, get: (r) => (r.active === false ? chip('Draft', 'Discontinued') : chip('Paid', 'Active')) }] });
+  };
+
+  /* ---------- spreadsheet import (.xlsx / .csv), read in the browser ---------- */
+  async function unzipXlsx(buf) {
+    const dv = new DataView(buf); let eocd = -1;
+    for (let i = buf.byteLength - 22; i >= Math.max(0, buf.byteLength - 66000); i--) if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+    if (eocd < 0) throw new Error('That file is not a valid .xlsx spreadsheet');
+    const n = dv.getUint16(eocd + 10, true); let p = dv.getUint32(eocd + 16, true); const files = {};
+    for (let k = 0; k < n; k++) {
+      const method = dv.getUint16(p + 10, true), csize = dv.getUint32(p + 20, true), nl = dv.getUint16(p + 28, true), xl = dv.getUint16(p + 30, true), cl = dv.getUint16(p + 32, true), off = dv.getUint32(p + 42, true);
+      files[new TextDecoder().decode(new Uint8Array(buf, p + 46, nl))] = { method, csize, off };
+      p += 46 + nl + xl + cl;
+    }
+    return async (name) => {
+      const f = files[name]; if (!f) return null;
+      const start = f.off + 30 + dv.getUint16(f.off + 26, true) + dv.getUint16(f.off + 28, true);
+      const data = new Uint8Array(buf, start, f.csize);
+      if (f.method === 0) return new TextDecoder().decode(data);
+      if (typeof DecompressionStream === 'undefined') throw new Error('This browser cannot read .xlsx files. Save the sheet as .csv and import that instead.');
+      return new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).text();
+    };
+  }
+  function parseCsv(text) {
+    const rows = []; let row = [], cell = '', q = false;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (q) { if (ch === '"' && text[i + 1] === '"') { cell += '"'; i++; } else if (ch === '"') q = false; else cell += ch; }
+      else if (ch === '"') q = true; else if (ch === ',') { row.push(cell); cell = ''; }
+      else if (ch === '\n' || ch === '\r') { if (ch === '\r' && text[i + 1] === '\n') i++; row.push(cell); rows.push(row); row = []; cell = ''; }
+      else cell += ch;
+    }
+    if (cell || row.length) { row.push(cell); rows.push(row); }
+    return rows;
+  }
+  async function readSheetRows(file) {
+    if (/\.csv$/i.test(file.name)) return parseCsv(await file.text());
+    const read = await unzipXlsx(await file.arrayBuffer());
+    const xml = (s) => new DOMParser().parseFromString(s, 'application/xml');
+    const ss = await read('xl/sharedStrings.xml');
+    const shared = ss ? [...xml(ss).getElementsByTagName('si')].map((si) => [...si.getElementsByTagName('t')].map((t) => t.textContent).join('')) : [];
+    const wb = xml(await read('xl/workbook.xml')), rels = xml(await read('xl/_rels/workbook.xml.rels'));
+    const sheet = wb.getElementsByTagName('sheet')[0];
+    const rid = sheet.getAttribute('r:id') || sheet.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id');
+    let target = [...rels.getElementsByTagName('Relationship')].find((r) => r.getAttribute('Id') === rid).getAttribute('Target').replace(/^\//, '');
+    if (!target.startsWith('xl/')) target = 'xl/' + target;
+    const out = [];
+    for (const row of xml(await read(target)).getElementsByTagName('row')) {
+      const cells = [];
+      for (const c of row.getElementsByTagName('c')) {
+        const ci = c.getAttribute('r').replace(/\d+/g, '').split('').reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0) - 1;
+        const t = c.getAttribute('t'), v = c.getElementsByTagName('v')[0];
+        cells[ci] = t === 's' && v ? shared[Number(v.textContent)] : t === 'inlineStr' ? [...c.getElementsByTagName('t')].map((x) => x.textContent).join('') : v ? v.textContent : '';
+      }
+      out.push(Array.from(cells, (x) => x ?? ''));
+    }
+    return out;
+  }
+  function rowsToItems(rows) {
+    const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z/]/g, '');
+    const h = rows.findIndex((r) => r.some((c) => /^(code|itemcode|sku)$/.test(norm(c))));
+    if (h < 0) throw new Error('Could not find a "Code" column header in the sheet');
+    const head = rows[h].map(norm);
+    const col = (...res) => head.findIndex((x) => res.some((re) => re.test(x)));
+    const C = { code: col(/^(code|itemcode|sku)$/), brand: col(/^brand/), gauge: col(/^(gauge|guage|thickness)/), name: col(/^(name|description|itemname)/),
+      length: col(/^length/), weight: col(/^(wt|weight)/), pcsPerTon: col(/pc.*ton|pcs.*ton|perton/), category: col(/^categ/), price: col(/^(price|unitprice|rate)/), unit: col(/^unit$/) };
+    const val = (r, k) => (C[k] >= 0 ? String(r[C[k]] ?? '').replace(/\s+/g, ' ').trim() : '');
+    const nv = (r, k) => { const s = val(r, k); if (!s || s === '-') return null; const n = Number(s.replace(/,/g, '')); return Number.isFinite(n) ? n : null; };
+    const out = [];
+    for (let i = h + 1; i < rows.length; i++) {
+      const r = rows[i]; const code = val(r, 'code'); if (!code) continue;
+      const name = val(r, 'name');
+      const it = { code, brand: val(r, 'brand'), gauge: nv(r, 'gauge'), name, length: nv(r, 'length'), weight: nv(r, 'weight'),
+        pcsPerTon: nv(r, 'pcsPerTon') === null ? null : Math.round(nv(r, 'pcsPerTon')), category: val(r, 'category') || categorizeItem(name),
+        unit: val(r, 'unit') || 'pc', active: true };
+      const price = nv(r, 'price'); if (price !== null) it.price = price;
+      Object.keys(it).forEach((k) => it[k] === null && delete it[k]);
+      out.push(it);
+    }
+    return out;
+  }
+  function importItemsModal() {
+    const m = modal('Import items from a spreadsheet', `
+      <p class="page-sub" style="margin:0 0 14px">Upload an .xlsx or .csv file with a header row. Columns used: Code, Name, Brand, Gauge, Length, Weight per piece, Pieces per ton, and optionally Category, Price and Unit. Items already in the catalogue are skipped.</p>
+      <label class="fld">Spreadsheet<input type="file" accept=".xlsx,.csv" data-ifile></label>
+      <div data-ipreview></div>
+      <div class="modal-foot"><button type="button" class="ghost" data-close>Cancel</button><button type="button" class="pill-btn solid" data-igo disabled>Import</button></div>`);
+    let fresh = [];
+    $('[data-ifile]', m).addEventListener('change', async (e) => {
+      const f = e.target.files[0], pv = $('[data-ipreview]', m), go = $('[data-igo]', m);
+      fresh = []; go.disabled = true; if (!f) { pv.innerHTML = ''; return; }
+      pv.innerHTML = '<p class="page-sub">Reading…</p>';
+      try {
+        const items = rowsToItems(await readSheetRows(f));
+        const have = new Set(db.all('items').map(itemKey)), seen = new Set();
+        fresh = items.filter((i) => { const k = itemKey(i); if (have.has(k) || seen.has(k)) return false; seen.add(k); return true; });
+        const by = {}; fresh.forEach((i) => { by[i.category] = (by[i.category] || 0) + 1; });
+        pv.innerHTML = `<div class="import-sum"><b>${num(fresh.length)}</b> new item${fresh.length === 1 ? '' : 's'} to add · ${num(items.length - fresh.length)} already in the catalogue or repeated</div>
+          ${fresh.length ? `<div class="import-cats">${Object.entries(by).sort((a, b) => b[1] - a[1]).map(([c, n]) => `<span>${esc(c)} <b class="tnum">${n}</b></span>`).join('')}</div>` : ''}`;
+        go.disabled = !fresh.length; go.textContent = fresh.length ? `Import ${fresh.length} item${fresh.length === 1 ? '' : 's'}` : 'Nothing new to import';
+      } catch (err) { pv.innerHTML = `<p class="auth-err">${esc(err.message)}</p>`; }
+    });
+    $('[data-igo]', m).addEventListener('click', async () => {
+      if (!fresh.length) return;
+      const n = fresh.length; closeModal();
+      db.insertMany('items', fresh).then(() => toast(`${n} item${n === 1 ? '' : 's'} imported`));
+      itemCat = 'All'; PAGES.items();
+    });
+  }
+
   /* ---------- module clicks ---------- */
   function moduleClick(e) {
     const t = e.target; let x;
@@ -1215,6 +1383,9 @@
     if ((x = t.closest('[data-pl]'))) { plPeriod = x.dataset.pl; PAGES.pnl(); return true; }
     if ((x = t.closest('[data-vatnav]'))) { const [y, m] = vatYm.split('-').map(Number); vatYm = GT.iso(new Date(y, m - 1 + Number(x.dataset.vatnav), 1)).slice(0, 7); PAGES.vat(); return true; }
     if (t.closest('[data-act="run-payroll"]')) { runPayrollModal(); return true; }
+    if ((x = t.closest('[data-icat]'))) { itemCat = x.dataset.icat; PAGES.items(); return true; }
+    if ((x = t.closest('[data-ibrand]'))) { itemBrand = x.dataset.ibrand; PAGES.items(); return true; }
+    if (t.closest('[data-act="import-items"]')) { importItemsModal(); return true; }
     return false;
   }
   main.addEventListener('change', (e) => { if (e.target.matches('[data-attdate]') && e.target.value) { attDate = e.target.value; PAGES.attendance(); } });
@@ -1248,7 +1419,7 @@
       case 'me': location.hash = '#/account'; return;
       case 'load-demo': case 'clear-data': {
         const clear = act === 'clear-data';
-        if (!confirm(clear ? 'Delete ALL clients, invoices, quotations, payments and other records? Staff accounts and settings are kept. This cannot be undone.' : 'Replace all records with the demo data? Everything currently entered will be removed.')) return;
+        if (!confirm(clear ? 'Delete ALL clients, invoices, quotations, payments and other records? The item catalogue, admin accounts and settings are kept. This cannot be undone.' : 'Replace all records with the demo data? Everything currently entered will be removed.')) return;
         (clear ? GT.clearAll() : GT.loadDemo()).then(() => GT.load()).then(() => { toast(clear ? 'All records deleted' : 'Demo data loaded'); route(); }).catch((err) => toast(err.message));
         return;
       }

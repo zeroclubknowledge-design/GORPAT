@@ -25,11 +25,11 @@
   };
   // Mirror of can_read / can_write in supabase/schema.sql — used only to shape the UI.
   const COLS = ['clients', 'vendors', 'invoices', 'quotations', 'procurement', 'payments', 'expenses', 'enquiries',
-    'deals', 'returns', 'credit_notes', 'warehouses', 'stock', 'transfers', 'deliveries', 'drivers', 'cost_ledger', 'employees', 'attendance', 'payroll'];
+    'deals', 'returns', 'credit_notes', 'warehouses', 'stock', 'transfers', 'deliveries', 'drivers', 'cost_ledger', 'employees', 'attendance', 'payroll', 'items'];
   // Mirror of can_read / can_write in supabase/002_head_admin_access.sql — shapes the UI only;
   // the database enforces the real rules.
   // access sections, in the order the head admin sees them (mirror of supabase/003_operations_modules.sql)
-  const SECTIONS = ['clients', 'enquiries', 'deals', 'quotations', 'invoices', 'returns', 'payments',
+  const SECTIONS = ['items', 'clients', 'enquiries', 'deals', 'quotations', 'invoices', 'returns', 'payments',
     'procurement', 'vendors', 'warehouses', 'stock', 'transfers', 'deliveries', 'drivers',
     'expenses', 'cost_ledger', 'reports', 'employees', 'attendance', 'payroll'];
   const secOf = (c) => (c === 'credit_notes' ? 'returns' : c);
@@ -49,7 +49,8 @@
       || (c === 'warehouses' && any('stock', 'transfers'))
       || (c === 'stock' && any('warehouses'))
       || (c === 'drivers' && any('deliveries'))
-      || (c === 'employees' && any('attendance', 'payroll')));
+      || (c === 'employees' && any('attendance', 'payroll'))
+      || (c === 'items' && any('quotations', 'invoices', 'procurement', 'stock', 'transfers')));
     return { read, write: COLS.filter((c) => lvl(secOf(c)) === 2), reports: lvl('reports') >= 1, settings: false, head: false };
   }
   const ROLES = {
@@ -197,6 +198,17 @@
         if (changed) window.dispatchEvent(new CustomEvent('gt:changed'));
       });
       return rec;
+    },
+    // many records in one request (spreadsheet imports)
+    insertMany(col, recs) {
+      recs.forEach((r) => { r.id = r.id || uid(col.slice(0, 2)); });
+      this.all(col).unshift(...recs);
+      return enqueue(async () => {
+        for (let i = 0; i < recs.length; i += 200) {
+          const chunk = recs.slice(i, i + 200).map((r) => ({ col, id: r.id, data: JSON.parse(JSON.stringify(r)) }));
+          await rest('POST', 'records', chunk, { Prefer: 'return=minimal' });
+        }
+      });
     },
     update(col, id, patch) {
       const r = this.get(col, id);
